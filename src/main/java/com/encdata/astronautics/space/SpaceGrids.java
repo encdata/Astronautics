@@ -168,8 +168,8 @@ public final class SpaceGrids {
     }
 
     public static void alignPlayerFrame(ServerPlayer player, SpaceGridAddress target) {
+        if (SpaceProjection.frameGrid(player).equals(target)) return;
         SpacePosition position = SpaceProjection.observerPosition(player);
-        if (position.grid().equals(target)) return;
         SpacePosition origin = new SpacePosition(target, 0.0, 0.0, 0.0);
         Vec3 local = origin.deltaWithin(position, SpacePosition.GRID_SIZE)
                 .map(delta -> new Vec3(delta.x(), delta.y(), delta.z())).orElse(null);
