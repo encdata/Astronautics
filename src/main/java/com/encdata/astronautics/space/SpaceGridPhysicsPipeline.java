@@ -72,7 +72,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     private final List<WorldConstraint> worldConstraints = new ArrayList<>();
     private final Set<UUID> teleportedShips = new HashSet<>();
     private boolean teleporting;
-    private final Map<PhysicsConstraintHandle, Set<UUID>> shipConstraints = new HashMap<>();
+    private final Map<ShipConstraint, Set<UUID>> shipConstraints = new HashMap<>();
     private long lastSkippedConstraintWarning = Long.MIN_VALUE;
 
     SpaceGridPhysicsPipeline(ServerLevel spaceLevel, PhysicsPipeline pipeline) {
@@ -168,8 +168,13 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 Object handle = SpaceGridPhysicsPipelineProvider.addConstraint(host, method, args);
                 if (handle instanceof PhysicsConstraintHandle constraint) {
                     markConstraint(args[0], args[1]);
-                    shipConstraints.put(constraint, Set.of(((ServerSubLevel) args[0]).getUniqueId(),
+                    ShipConstraint tracked = new ShipConstraint(method,
+                            (ServerSubLevel) args[0], (ServerSubLevel) args[1],
+                            (PhysicsConstraintConfiguration<?>) args[2], constraint,
+                            frameOf((ServerSubLevel) args[0]).level());
+                    shipConstraints.put(tracked, Set.of(((ServerSubLevel) args[0]).getUniqueId(),
                             ((ServerSubLevel) args[1]).getUniqueId()));
+                    return tracked.handle;
                 }
                 return handle;
             }
@@ -479,8 +484,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     }
 
     private void refreshConstrainedFrames(Map<UUID, ServerSubLevel> ships) {
-        shipConstraints.keySet().removeIf(handle -> !handle.isValid());
-        worldConstraints.removeIf(constraint -> !constraint.inner.isValid());
+        shipConstraints.entrySet().removeIf(entry -> !entry.getKey().isLive());
+        worldConstraints.removeIf(constraint -> !constraint.isLive());
         Set<UUID> held = new HashSet<>();
         for (Set<UUID> ids : shipConstraints.values()) held.addAll(ids);
         for (WorldConstraint constraint : worldConstraints) held.add(constraint.ship.getUniqueId());
@@ -511,13 +516,13 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     }
 
     private Object addWorldConstraint(PhysicsPipeline host, Method method, Object[] args) {
-        worldConstraints.removeIf(constraint -> !constraint.inner.isValid());
+        worldConstraints.removeIf(constraint -> !constraint.isLive());
         boolean worldFirst = args[0] == null;
         ServerSubLevel ship = (ServerSubLevel) (worldFirst ? args[1] : args[0]);
         PhysicsConstraintConfiguration<?> config = (PhysicsConstraintConfiguration<?>) args[2];
         alignProjection(ship);
         WorldConstraint constraint = new WorldConstraint(ship, worldFirst, method, config);
-        constraint.build(host);
+        constraint.build(host, frameOf(ship).level());
         markConstraint(args[0], args[1]);
         worldConstraints.add(constraint);
         return constraint.handle;
@@ -526,7 +531,9 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     private void reanchorWorldConstraints(FrameLocation location) {
         PhysicsPipeline host = rawPipeline(location.level());
         for (WorldConstraint constraint : List.copyOf(worldConstraints)) {
-            if (location.frame().ships().contains(constraint.ship.getUniqueId())) constraint.rebuild(host);
+            if (location.frame().ships().contains(constraint.ship.getUniqueId())) {
+                constraint.moveTo(host, location.level());
+            }
         }
     }
 
@@ -678,7 +685,10 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     private void maintainFrames() {
         Map<UUID, ServerSubLevel> ships = loadedShips();
         teleportedShips.retainAll(ships.keySet());
-        if (ships.isEmpty()) return;
+        if (ships.isEmpty()) {
+            refreshConstrainedFrames(ships);
+            return;
+        }
         for (FrameLocation location : activeFrames(ships.keySet())) pruneFrame(location, ships);
         refreshConstrainedFrames(ships);
         splitSpreadFrames(ships);
@@ -769,7 +779,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 shiftIntoFrame(ship, source, target, pose, position);
                 return;
             }
-            transferShip(ship, source, target, pose, position, detached);
+            transferShip(ship, source, target, pose, position, detached, Set.of(ship.getUniqueId()));
             return;
         }
 
@@ -788,7 +798,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
         FrameLocation target = new FrameLocation(allocationLevel,
                 SpaceGridFrameData.get(allocationLevel).allocate(position, projection, ship.getUniqueId()));
-        transferShip(ship, source, target, pose, position, detached);
+        transferShip(ship, source, target, pose, position, detached, Set.of(ship.getUniqueId()));
     }
 
     private void mergeNearbyFrames(Map<UUID, ServerSubLevel> ships) {
@@ -930,6 +940,10 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
 
         SpaceGridFrameData targetData = SpaceGridFrameData.get(target.level());
+        Set<UUID> movingShips = new HashSet<>();
+        for (UUID shipId : source.frame().ships()) {
+            if (ships.containsKey(shipId)) movingShips.add(shipId);
+        }
         for (UUID shipId : List.copyOf(source.frame().ships())) {
             ServerSubLevel ship = ships.get(shipId);
             if (ship == null) continue;
@@ -940,7 +954,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             DetachedShip detached = new DetachedShip(
                     readShipPose(rawPipeline(source.level()), source.frame(), ship),
                     contraptionsFor(ship, rawPipeline(source.level())));
-            transferShip(ship, source, target, detached.pose().pose(), detached.pose().position(), detached);
+            transferShip(ship, source, target, detached.pose().pose(), detached.pose().position(),
+                    detached, movingShips);
         }
         if (source.frame().constrained()) targetData.markConstrained(target.frame().id());
         FrameLocation merged = new FrameLocation(target.level(),
@@ -999,7 +1014,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     }
 
     private void transferShip(ServerSubLevel ship, FrameLocation source, FrameLocation target,
-                              Pose3dc pose, SpacePosition position, DetachedShip detached) {
+                              Pose3dc pose, SpacePosition position, DetachedShip detached,
+                              Set<UUID> movingShips) {
         PhysicsPipeline sourcePipeline = rawPipeline(source.level());
         PhysicsPipeline targetPipeline = rawPipeline(target.level());
         SpaceGridFrameData targetData = SpaceGridFrameData.get(target.level());
@@ -1107,6 +1123,50 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         for (KinematicContraption contraption : detached.contraptions()) {
             contraptionOwners.put(contraption, targetPipeline);
         }
+        migrateConstraints(ship, target, movingShips);
+    }
+
+    private void migrateConstraints(ServerSubLevel ship, FrameLocation target, Set<UUID> movingShips) {
+        boolean constrained = false;
+        for (WorldConstraint constraint : List.copyOf(worldConstraints)) {
+            if (constraint.ship != ship) continue;
+            try {
+                constraint.moveTo(rawPipeline(target.level()), target.level());
+                constrained |= constraint.isLive();
+            } catch (RuntimeException | Error failure) {
+                constraint.retire();
+                Astronautics.LOGGER.warn("Could not move a world constraint with ship {}", ship.getUniqueId(), failure);
+            }
+        }
+
+        SpaceGridAddress targetAddress = SpaceGridLevelFactory.addressOf(
+                spaceLevel.getServer(), target.level().dimension());
+        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
+        for (Map.Entry<ShipConstraint, Set<UUID>> entry : List.copyOf(shipConstraints.entrySet())) {
+            Set<UUID> ids = entry.getValue();
+            if (ids.stream().noneMatch(movingShips::contains)) continue;
+            boolean pending = movingShips.stream().anyMatch(id -> !isShipOwnedBy(directory, id, targetAddress));
+            if (pending) continue;
+
+            ShipConstraint constraint = entry.getKey();
+            if (ids.stream().allMatch(id -> isShipOwnedBy(directory, id, targetAddress))) {
+                try {
+                    constraint.moveTo(rawPipeline(target.level()), target.level());
+                    constrained |= constraint.isLive();
+                } catch (RuntimeException | Error failure) {
+                    constraint.retire();
+                    Astronautics.LOGGER.warn("Could not move a ship constraint into physics frame {}",
+                            target.frame().id(), failure);
+                }
+            } else {
+                constraint.retire();
+            }
+        }
+        if (constrained) SpaceGridFrameData.get(target.level()).markConstrained(target.frame().id());
+    }
+
+    private static boolean isShipOwnedBy(SpaceGridDirectory directory, UUID shipId, SpaceGridAddress address) {
+        return address.equals(directory.frameOwnerAddress(shipId));
     }
 
     private static void rollbackTargetTransfer(PhysicsPipeline targetPipeline, ServerSubLevel ship,
@@ -1612,6 +1672,143 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 frame(ship.getUniqueId(), owner));
     }
 
+    private boolean isConstraintSceneLoaded(ServerLevel level) {
+        return level != null && SpaceGridLevelFactory.find(spaceLevel.getServer(), level.dimension()) == level;
+    }
+
+    private static Object[] copyConstraintArgs(Object[] args) {
+        if (args == null) return new Object[0];
+        Object[] copy = args.clone();
+        for (int i = 0; i < copy.length; i++) {
+            if (copy[i] instanceof Vector3dc vector) copy[i] = new Vector3d(vector);
+            else if (copy[i] instanceof org.joml.Quaterniondc quaternion) {
+                copy[i] = new Quaterniond(quaternion);
+            } else if (copy[i] instanceof Object[] values) copy[i] = values.clone();
+        }
+        return copy;
+    }
+
+    private final class ShipConstraint implements InvocationHandler {
+        private final Method addMethod;
+        private final ServerSubLevel bodyA;
+        private final ServerSubLevel bodyB;
+        private final PhysicsConstraintConfiguration<?> config;
+        private final Map<String, Setting> settings = new LinkedHashMap<>();
+        private PhysicsConstraintHandle inner;
+        private PhysicsConstraintHandle handle;
+        private ServerLevel ownerLevel;
+        private boolean active = true;
+
+        private ShipConstraint(Method addMethod, ServerSubLevel bodyA,
+                               ServerSubLevel bodyB, PhysicsConstraintConfiguration<?> config,
+                               PhysicsConstraintHandle inner, ServerLevel ownerLevel) {
+            this.addMethod = addMethod;
+            this.bodyA = bodyA;
+            this.bodyB = bodyB;
+            this.config = config;
+            this.inner = inner;
+            this.ownerLevel = ownerLevel;
+            handle = createHandle();
+        }
+
+        private boolean isLive() {
+            if (!active) return false;
+            if (!isConstraintSceneLoaded(ownerLevel)) {
+                active = false;
+                return false;
+            }
+            if (inner.isValid()) return true;
+            active = false;
+            return false;
+        }
+
+        private void moveTo(PhysicsPipeline host, ServerLevel level) {
+            if (!active) return;
+            if (!isConstraintSceneLoaded(ownerLevel)) {
+                active = false;
+                return;
+            }
+
+            PhysicsConstraintHandle replacement = createNative(host);
+            try {
+                for (Setting setting : settings.values()) applyTo(replacement, setting.method(), setting.args());
+            } catch (RuntimeException | Error failure) {
+                if (isConstraintSceneLoaded(level) && replacement.isValid()) replacement.remove();
+                throw failure;
+            }
+
+            PhysicsConstraintHandle previous = inner;
+            if (isConstraintSceneLoaded(ownerLevel) && previous.isValid()) previous.remove();
+            inner = replacement;
+            ownerLevel = level;
+        }
+
+        private PhysicsConstraintHandle createNative(PhysicsPipeline host) {
+            return (PhysicsConstraintHandle) call(() -> SpaceGridPhysicsPipelineProvider.addConstraint(
+                    host, addMethod, new Object[]{bodyA, bodyB, config}));
+        }
+
+        private PhysicsConstraintHandle createHandle() {
+            List<Class<?>> types = new ArrayList<>();
+            for (Class<?> type : List.of(FixedConstraintHandle.class, FreeConstraintHandle.class,
+                    RotaryConstraintHandle.class, GenericConstraintHandle.class)) {
+                if (type.isInstance(inner)) types.add(type);
+            }
+            return (PhysicsConstraintHandle) Proxy.newProxyInstance(PhysicsConstraintHandle.class.getClassLoader(),
+                    types.toArray(Class<?>[]::new), this);
+        }
+
+        private void retire() {
+            if (!active) return;
+            if (isConstraintSceneLoaded(ownerLevel) && inner.isValid()) inner.remove();
+            active = false;
+            shipConstraints.remove(this);
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) {
+            switch (method.getName()) {
+                case "remove" -> {
+                    retire();
+                    return null;
+                }
+                case "isValid" -> {
+                    return isLive();
+                }
+                case "equals" -> {
+                    return proxy == args[0];
+                }
+                case "hashCode" -> {
+                    return System.identityHashCode(proxy);
+                }
+                case "toString" -> {
+                    return "SpaceConstraint[" + (active ? inner : "removed") + "]";
+                }
+            }
+
+            if (!isLive()) throw new IllegalStateException("constraint physics scene is no longer active");
+            Object[] stored = copyConstraintArgs(args);
+            if (method.getName().startsWith("set") || method.getName().equals("lockAxes")) {
+                String key = stored.length > 0 && stored[0] instanceof Enum<?> axis
+                        ? method.getName() + ":" + axis.name() : method.getName();
+                settings.put(key, new Setting(method, stored));
+            }
+            return applyTo(inner, method, stored);
+        }
+
+        private Object applyTo(PhysicsConstraintHandle target, Method method, Object[] args) {
+            return call(() -> {
+                try {
+                    return method.invoke(target, args);
+                } catch (InvocationTargetException exception) {
+                    throw exception.getCause();
+                }
+            });
+        }
+
+        private record Setting(Method method, Object[] args) {}
+    }
+
     private final class WorldConstraint implements InvocationHandler {
         private final ServerSubLevel ship;
         private final boolean worldFirst;
@@ -1621,6 +1818,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         private final Map<String, Setting> settings = new LinkedHashMap<>();
         private PhysicsConstraintHandle inner;
         private PhysicsConstraintHandle handle;
+        private ServerLevel ownerLevel;
+        private boolean active = true;
 
         private WorldConstraint(ServerSubLevel ship, boolean worldFirst, Method addMethod,
                                 PhysicsConstraintConfiguration<?> config) {
@@ -1631,23 +1830,77 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             this.anchor = worldPosition(ship, worldAnchor(config, worldFirst));
         }
 
-        private void build(PhysicsPipeline host) {
+        private void build(PhysicsPipeline host, ServerLevel level) {
+            PhysicsConstraintHandle created = createNative(host);
+            for (Setting setting : settings.values()) applyTo(created, setting.method(), setting.args());
+            inner = created;
+            ownerLevel = level;
+            if (handle == null) handle = createHandle();
+        }
+
+        private boolean isLive() {
+            if (!active) return false;
+            if (!isConstraintSceneLoaded(ownerLevel)) {
+                active = false;
+                return false;
+            }
+            if (inner.isValid()) return true;
+            active = false;
+            return false;
+        }
+
+        private void moveTo(PhysicsPipeline host, ServerLevel level) {
+            if (!active) return;
+            if (level == ownerLevel) {
+                rebuild(host, level);
+                return;
+            }
+            if (!isConstraintSceneLoaded(ownerLevel)) {
+                active = false;
+                return;
+            }
+            PhysicsConstraintHandle previous = inner;
+            ServerLevel previousLevel = ownerLevel;
+            PhysicsConstraintHandle replacement = createNative(host);
+            try {
+                for (Setting setting : settings.values()) applyTo(replacement, setting.method(), setting.args());
+                if (isConstraintSceneLoaded(previousLevel) && previous.isValid()) previous.remove();
+            } catch (RuntimeException | Error failure) {
+                if (isConstraintSceneLoaded(level) && replacement.isValid()) replacement.remove();
+                throw failure;
+            }
+            inner = replacement;
+            ownerLevel = level;
+        }
+
+        private void rebuild(PhysicsPipeline host, ServerLevel level) {
+            if (!isLive()) return;
+            PhysicsConstraintHandle previous = inner;
+            PhysicsConstraintHandle replacement = createNative(host);
+            try {
+                for (Setting setting : settings.values()) applyTo(replacement, setting.method(), setting.args());
+                if (previous.isValid()) previous.remove();
+            } catch (RuntimeException | Error failure) {
+                if (isConstraintSceneLoaded(level) && replacement.isValid()) replacement.remove();
+                throw failure;
+            }
+            inner = replacement;
+            ownerLevel = level;
+        }
+
+        private PhysicsConstraintHandle createNative(PhysicsPipeline host) {
             PhysicsConstraintConfiguration<?> physical = withWorldAnchor(config, worldFirst,
                     physicsPosition(ship, anchor));
             Object[] args = worldFirst ? new Object[]{null, ship, physical} : new Object[]{ship, null, physical};
-            inner = (PhysicsConstraintHandle) call(() ->
+            return (PhysicsConstraintHandle) call(() ->
                     SpaceGridPhysicsPipelineProvider.addConstraint(host, addMethod, args));
-            if (handle == null) handle = createHandle();
-            for (Setting setting : settings.values()) apply(setting.method(), setting.args());
         }
 
-        private void rebuild(PhysicsPipeline host) {
-            if (!inner.isValid()) {
-                worldConstraints.remove(this);
-                return;
-            }
-            inner.remove();
-            build(host);
+        private void retire() {
+            if (!active) return;
+            worldConstraints.remove(this);
+            if (isConstraintSceneLoaded(ownerLevel) && inner.isValid()) inner.remove();
+            active = false;
         }
 
         private PhysicsConstraintHandle createHandle() {
@@ -1664,12 +1917,11 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         public Object invoke(Object proxy, Method method, Object[] args) {
             switch (method.getName()) {
                 case "remove" -> {
-                    worldConstraints.remove(this);
-                    if (inner.isValid()) inner.remove();
+                    retire();
                     return null;
                 }
                 case "isValid" -> {
-                    return inner.isValid();
+                    return isLive();
                 }
                 case "equals" -> {
                     return proxy == args[0];
@@ -1681,17 +1933,18 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                     return "WorldConstraint[" + inner + "]";
                 }
             }
-            Object[] stored = args == null ? new Object[0] : args.clone();
+            if (!isLive()) throw new IllegalStateException("constraint physics scene is no longer active");
+            Object[] stored = copyConstraintArgs(args);
             if (isWorldFrame(method)) stored[0] = worldPosition(ship, (Vector3dc) args[0]);
             if (method.getName().startsWith("set") || method.getName().equals("lockAxes")) {
                 String key = stored.length > 0 && stored[0] instanceof Enum<?> axis
                         ? method.getName() + ":" + axis.name() : method.getName();
                 settings.put(key, new Setting(method, stored));
             }
-            return apply(method, stored);
+            return applyTo(inner, method, stored);
         }
 
-        private Object apply(Method method, Object[] args) {
+        private Object applyTo(PhysicsConstraintHandle target, Method method, Object[] args) {
             Object[] actual = args;
             if (isWorldFrame(method)) {
                 actual = args.clone();
@@ -1700,7 +1953,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             Object[] finalArgs = actual;
             return call(() -> {
                 try {
-                    return method.invoke(inner, finalArgs);
+                    return method.invoke(target, finalArgs);
                 } catch (InvocationTargetException exception) {
                     throw exception.getCause();
                 }

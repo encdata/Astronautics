@@ -107,6 +107,8 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.named('processResources', ProcessResources).configure {
+    inputs.property 'mod_version', project.version
+    inputs.property 'aeronautics_mod_version_range', project.property('aeronautics_mod_version_range')
     filesMatching('META-INF/neoforge.mods.toml') {
         expand 'mod_version': project.version,
                 'aeronautics_mod_version_range': project.property('aeronautics_mod_version_range')
