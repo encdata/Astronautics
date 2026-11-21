@@ -1,0 +1,5 @@
+{
+  "parent": "minecraft:block/stairs",
+  "textures": { "bottom": "astronautics:block/enstatite", "side": "astronautics:block/enstatite", "top": "astronautics:block/enstatite" }
+}
+

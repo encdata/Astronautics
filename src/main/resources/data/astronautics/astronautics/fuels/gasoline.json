@@ -1,0 +1,9 @@
+{
+  "fluid": "astronautics:gasoline",
+  "efficiency": 0.55,
+  "thrust_multiplier": 0.65,
+  "fuel_consumption": 9,
+  "required_thruster_tier": 1,
+  "max_acceleration": 15.0,
+  "max_speed": 60.0
+}

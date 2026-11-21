@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "astronautics:block/oxygen_compressor" }
+  }
+}

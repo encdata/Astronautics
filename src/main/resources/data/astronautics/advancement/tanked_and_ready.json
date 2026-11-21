@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:life_support",
+  "display": { "icon": { "id": "astronautics:oxygen_tank" }, "title": { "translate": "advancements.astronautics.tanked_and_ready.title" }, "description": { "translate": "advancements.astronautics.tanked_and_ready.description" }, "frame": "task" },
+  "criteria": { "tank": { "trigger": "minecraft:inventory_changed", "conditions": { "items": [{ "items": ["astronautics:oxygen_tank"] }] } } }
+}

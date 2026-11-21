@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "type=bottom": {
+      "model": "astronautics:block/mars_stone_slab"
+    },
+    "type=double": {
+      "model": "astronautics:block/mars_stone"
+    },
+    "type=top": {
+      "model": "astronautics:block/mars_stone_slab_top"
+    }
+  }
+}

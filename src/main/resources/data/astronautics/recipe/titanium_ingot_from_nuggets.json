@@ -1,0 +1,6 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": ["NNN", "NNN", "NNN"],
+  "key": {"N": {"item": "astronautics:titanium_nugget"}},
+  "result": {"id": "astronautics:titanium_ingot"}
+}

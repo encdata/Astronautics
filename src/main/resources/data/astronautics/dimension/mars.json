@@ -1,0 +1,15 @@
+{
+  "type": "astronautics:mars",
+  "generator": {
+    "type": "minecraft:noise",
+    "settings": "astronautics:mars",
+    "biome_source": {
+      "type": "minecraft:multi_noise",
+      "biomes": [
+        { "biome": "astronautics:martian_wastelands", "parameters": { "temperature": -0.5, "humidity": 0, "continentalness": 0, "erosion": 0, "weirdness": 0, "depth": 0, "offset": 0.175 } },
+        { "biome": "astronautics:martian_canyon_creek", "parameters": { "temperature": -0.5, "humidity": 0, "continentalness": 0, "erosion": 0, "weirdness": -0.25, "depth": 0, "offset": 0 } },
+        { "biome": "astronautics:martian_polar_caps", "parameters": { "temperature": -0.5, "humidity": 0, "continentalness": 0, "erosion": 0, "weirdness": -0.5, "depth": 0, "offset": 0 } }
+      ]
+    }
+  }
+}

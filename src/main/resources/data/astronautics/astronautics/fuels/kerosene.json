@@ -1,0 +1,9 @@
+{
+  "fluid": "astronautics:kerosene",
+  "efficiency": 0.65,
+  "thrust_multiplier": 0.75,
+  "fuel_consumption": 8,
+  "required_thruster_tier": 1,
+  "max_acceleration": 18.3333,
+  "max_speed": 73.3333
+}

@@ -1,0 +1,171 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.107'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+neoForge {
+    version = neoForge_version
+
+    runs {
+        configureEach {
+            ideName = "Astronautics ${it.name.capitalize()}"
+        }
+
+        client {
+            client()
+            gameDirectory = project.file('run/client')
+        }
+
+        server {
+            server()
+            gameDirectory = project.file('run/server')
+            programArgument 'nogui'
+        }
+    }
+
+    mods {
+        astronautics {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets.main.resources.srcDir('src/generated/resources')
+
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' }
+        }
+        filter { includeGroup 'maven.modrinth' }
+    }
+
+    exclusiveContent {
+        forRepository {
+            maven { name = 'JitPack'; url = 'https://jitpack.io' }
+        }
+        filter { includeGroup 'com.github.encdata' }
+    }
+
+    maven { url = "https://maven.createmod.net" }
+    maven { url = "https://maven.ithundxr.dev/snapshots" }
+    maven { url = "https://maven.ryanhcode.dev/releases" }
+
+    maven { url = "https://raw.githubusercontent.com/Fuzss/modresources/main/maven" } //needed for ponder deps
+    maven { url = "https://maven.blamejared.com" } //jei, vazkii's mods
+    maven { url = "https://modmaven.dev" } //curios ig?
+    maven { url = "https://maven.squiddev.cc" } //cc is a required dep for.. one of our deps
+}
+
+
+dependencies {
+    jarJar(implementation('com.github.encdata:Panelworks:Release'))
+
+    compileOnly "maven.modrinth:3KUWeVhG:dzQ4eH6T"
+    runtimeOnly "maven.modrinth:3KUWeVhG:dzQ4eH6T"
+    implementation("dev.ryanhcode.offroad:offroad-neoforge-${minecraft_version}:${bundled_version}")
+    implementation("dev.simulated_team.simulated:simulated-neoforge-${minecraft_version}:${bundled_version}")
+    implementation("dev.eriksonn.aeronautics:aeronautics-neoforge-${minecraft_version}:${bundled_version}")
+    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}") { transitive = false }
+    implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+    api("dev.ryanhcode.sable:sable-neoforge-$minecraft_version:$sable_version")
+    jarJar(implementation("maven.modrinth:Iq9c4mLa:qU6WVBqC"))
+
+    //deps for dependencies
+    compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
+    runtimeOnly("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
+    implementation("com.tterrag.registrate:Registrate:${registrate_version}")
+
+    compileOnly "mezz.jei:jei-${minecraft_version}-common-api:${jei_version}"
+    compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:${jei_version}"
+    implementation("mezz.jei:jei-${minecraft_version}-neoforge:${jei_version}")
+
+    compileOnly("top.theillusivec4.curios:curios-neoforge:${curios_version}+${minecraft_version}:api")
+    runtimeOnly("top.theillusivec4.curios:curios-neoforge:${curios_version}+${minecraft_version}")
+
+    jarJar(implementation("maven.modrinth:fancytabsections:6.0-NEOFORGE-1.21.1"))
+
+    compileOnly "maven.modrinth:aero-player-tilt:0.3.0"
+    compileOnly "maven.modrinth:aero_cam_sync:1.4.0"
+}
+
+configurations.configureEach {
+    resolutionStrategy.cacheDynamicVersionsFor 0, 'seconds'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand 'mod_version': project.version,
+                'aeronautics_mod_version_range': project.property('aeronautics_mod_version_range')
+    }
+}
+
+def validateAstronauticsResources = tasks.register('validateAstronauticsResources') {
+    def resources = fileTree('src/main/resources') { include '**/*.json' }
+    inputs.files(resources)
+    def blocksSourceFile = file('src/main/java/com/encdata/astronautics/registry/AstronauticsBlocks.java')
+    inputs.file(blocksSourceFile)
+
+    doLast {
+        def parser = new groovy.json.JsonSlurper()
+        resources.files.each { resource ->
+            try {
+                parser.parse(resource)
+            } catch (Exception exception) {
+                throw new GradleException("Invalid JSON resource: ${resource}", exception)
+            }
+        }
+
+        def blockSource = blocksSourceFile.text
+        def registeredBlocks = (blockSource =~ /BLOCKS\.register\("([^"]+)"/)
+                .collect { match -> match[1] } as Set
+        def lootDirectory = file('src/main/resources/data/astronautics/loot_table/blocks')
+        def lootTables = fileTree(lootDirectory) { include '*.json' }
+                .files.collect { loot -> loot.name.substring(0, loot.name.length() - 5) } as Set
+        def missingLoot = registeredBlocks - lootTables
+        if (!missingLoot.isEmpty()) {
+            throw new GradleException("Missing block loot tables: ${missingLoot.sort().join(', ')}")
+        }
+
+        registeredBlocks.findAll { it.endsWith('_slab') }.each { slab ->
+            def table = parser.parse(new File(lootDirectory, "${slab}.json"))
+            def entries = table.pools.collectMany { pool -> pool.entries ?: [] }
+            def ownDrop = entries.find { entry -> entry.name == "astronautics:${slab}" }
+            def doubleCount = ownDrop?.functions?.find { function ->
+                function.function == 'minecraft:set_count'
+                        && function.count == 2
+                        && function.conditions?.any { condition ->
+                            condition.condition == 'minecraft:block_state_property'
+                                    && condition.block == "astronautics:${slab}"
+                                    && condition.properties?.type == 'double'
+                        }
+            }
+            if (doubleCount == null) {
+                throw new GradleException("Slab loot table does not return two items for a double slab: ${slab}")
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn(validateAstronauticsResources)
+}
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes('Implementation-Version': project.version)
+    }
+}

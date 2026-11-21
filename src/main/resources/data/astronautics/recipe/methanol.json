@@ -1,0 +1,9 @@
+{
+  "type": "create:mixing",
+  "ingredients": [
+    {"item": "minecraft:sugar"},
+    {"item": "minecraft:charcoal"},
+    {"type": "neoforge:single", "amount": 1000, "fluid": "minecraft:water"}
+  ],
+  "results": [{"amount": 1000, "id": "astronautics:methanol"}]
+}

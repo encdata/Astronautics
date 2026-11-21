@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:root",
+  "display": { "icon": { "id": "astronautics:space_suit_helmet" }, "title": { "translate": "advancements.astronautics.wheres_my_helmet.title" }, "description": { "translate": "advancements.astronautics.wheres_my_helmet.description" }, "frame": "challenge" },
+  "criteria": { "vacuum": { "trigger": "minecraft:location", "conditions": { "player": { "location": { "dimension": "astronautics:space" }, "equipment": { "head": { "count": { "max": 0 } } } } } } }
+}

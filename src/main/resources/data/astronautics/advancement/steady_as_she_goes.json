@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:ignition",
+  "display": { "icon": { "id": "astronautics:reaction_based_thruster" }, "title": { "translate": "advancements.astronautics.steady_as_she_goes.title" }, "description": { "translate": "advancements.astronautics.steady_as_she_goes.description" }, "frame": "goal" },
+  "criteria": { "stabilization": { "trigger": "minecraft:impossible" } }
+}

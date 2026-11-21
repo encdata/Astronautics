@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:three_worlds",
+  "display": { "icon": { "id": "minecraft:grass_block" }, "title": { "translate": "advancements.astronautics.mankind_was_born_on_earth.title" }, "description": { "translate": "advancements.astronautics.mankind_was_born_on_earth.description" }, "frame": "challenge" },
+  "criteria": { "homecoming": { "trigger": "minecraft:impossible" } }
+}

@@ -1,0 +1,7 @@
+{
+  "dimension": "astronautics:space",
+  "priority": 10000,
+  "universal_drag": 0.0,
+  "base_gravity": [0.0, 0.0, 0.0],
+  "ignore_chunks": true
+}

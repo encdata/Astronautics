@@ -1,0 +1,10 @@
+{
+  "parent": "astronautics:root",
+  "display": {
+    "icon": { "id": "astronautics:center_of_mass_core" },
+    "title": { "translate": "advancements.astronautics.one_small_step.title" },
+    "description": { "translate": "advancements.astronautics.one_small_step.description" },
+    "frame": "goal"
+  },
+  "criteria": { "space": { "trigger": "minecraft:impossible" } }
+}

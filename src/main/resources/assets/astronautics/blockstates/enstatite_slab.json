@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "type=bottom": {
+      "model": "astronautics:block/enstatite_slab"
+    },
+    "type=double": {
+      "model": "minecraft:block/smooth_basalt"
+    },
+    "type=top": {
+      "model": "astronautics:block/enstatite_slab_top"
+    }
+  }
+}

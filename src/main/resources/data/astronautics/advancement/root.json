@@ -1,0 +1,13 @@
+{
+  "display": {
+    "icon": { "id": "astronautics:space_suit_helmet" },
+    "title": { "translate": "advancements.astronautics.root.title" },
+    "description": { "translate": "advancements.astronautics.root.description" },
+    "background": "astronautics:textures/block/mars_sand.png",
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": { "entered_world": { "trigger": "minecraft:tick" } }
+}

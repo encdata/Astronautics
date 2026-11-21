@@ -1,0 +1,9 @@
+{
+  "replace": false,
+  "values": [
+    "astronautics:bioethanol_bucket",
+    "astronautics:methanol_bucket",
+    "astronautics:gasoline_bucket",
+    "astronautics:kerosene_bucket"
+  ]
+}

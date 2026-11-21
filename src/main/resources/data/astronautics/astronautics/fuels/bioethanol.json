@@ -1,0 +1,9 @@
+{
+  "fluid": "astronautics:bioethanol",
+  "efficiency": 0.45,
+  "thrust_multiplier": 0.55,
+  "fuel_consumption": 10,
+  "required_thruster_tier": 1,
+  "max_acceleration": 11.6667,
+  "max_speed": 46.6667
+}

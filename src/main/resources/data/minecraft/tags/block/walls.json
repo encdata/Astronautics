@@ -1,0 +1,11 @@
+{
+  "replace": false,
+  "values": [
+    "astronautics:moon_stone_wall",
+    "astronautics:moon_cobblestone_wall",
+    "astronautics:mars_stone_wall",
+    "astronautics:mars_cobblestone_wall",
+    "astronautics:enstatite_wall",
+    "astronautics:venus_sediment_wall"
+  ]
+}

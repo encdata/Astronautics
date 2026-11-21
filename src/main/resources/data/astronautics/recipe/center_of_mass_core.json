@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["NBN", "BSB", "CPB"],
+  "key": {
+    "N": { "item": "minecraft:netherite_ingot" },
+    "B": { "item": "create:brass_sheet" },
+    "S": { "item": "minecraft:nether_star" },
+    "C": { "item": "create:brass_casing" },
+    "P": { "item": "create:precision_mechanism" }
+  },
+  "result": { "id": "astronautics:center_of_mass_core", "count": 1 }
+}

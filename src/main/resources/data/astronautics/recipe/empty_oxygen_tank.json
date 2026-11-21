@@ -1,0 +1,10 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["BFB", "BFB"],
+  "key": {
+    "B": { "item": "create:brass_sheet" },
+    "F": { "item": "create:fluid_tank" }
+  },
+  "result": { "id": "astronautics:empty_oxygen_tank", "count": 1 }
+}

@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:one_small_step",
+  "display": { "icon": { "id": "astronautics:moon_stone" }, "title": { "translate": "advancements.astronautics.lunar_module.title" }, "description": { "translate": "advancements.astronautics.lunar_module.description" }, "frame": "task" },
+  "criteria": { "moon": { "trigger": "minecraft:impossible" } }
+}

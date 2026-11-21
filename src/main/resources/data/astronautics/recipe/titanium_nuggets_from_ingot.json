@@ -1,0 +1,5 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [{"item": "astronautics:titanium_ingot"}],
+  "result": {"id": "astronautics:titanium_nugget", "count": 9}
+}

@@ -1,0 +1,15 @@
+{
+  "format": "POSITION_TEX_COLOR_NORMAL",
+  "mode": "QUADS",
+  "bufferSize": "TRANSIENT",
+  "sort": true,
+  "affectsCrumbling": false,
+  "outline": false,
+  "layers": [
+    { "type": "veil:shader", "name": "astronautics:atmospheric_sky" },
+    { "type": "minecraft:transparency", "mode": "translucent" },
+    { "type": "minecraft:cull", "face": "front" },
+    { "type": "minecraft:depth_test", "mode": "always" },
+    { "type": "minecraft:write_mask", "color": true, "depth": false }
+  ]
+}

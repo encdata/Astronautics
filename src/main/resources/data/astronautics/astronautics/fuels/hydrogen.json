@@ -1,0 +1,9 @@
+{
+  "fluid": "astronautics:hydrogen",
+  "efficiency": 1.4,
+  "thrust_multiplier": 1.35,
+  "fuel_consumption": 4,
+  "required_thruster_tier": 1,
+  "max_acceleration": 24.0,
+  "max_speed": 96.0
+}

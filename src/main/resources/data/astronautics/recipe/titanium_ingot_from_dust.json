@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:blasting",
+  "category": "misc",
+  "cookingtime": 100,
+  "experience": 1.0,
+  "ingredient": {"item": "astronautics:titanium_dust"},
+  "result": {"id": "astronautics:titanium_ingot"}
+}

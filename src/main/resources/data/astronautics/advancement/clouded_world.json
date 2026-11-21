@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:one_small_step",
+  "display": { "icon": { "id": "astronautics:venus_sediment" }, "title": { "translate": "advancements.astronautics.clouded_world.title" }, "description": { "translate": "advancements.astronautics.clouded_world.description" }, "frame": "task" },
+  "criteria": { "venus": { "trigger": "minecraft:impossible" } }
+}

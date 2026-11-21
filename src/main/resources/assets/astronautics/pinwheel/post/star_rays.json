@@ -1,0 +1,32 @@
+{
+  "stages": [
+    {
+      "type": "veil:blit",
+      "shader": "astronautics:star_rays",
+      "in": "minecraft:main",
+      "out": "star_rays_buffer",
+      "clear": true
+    },
+    {
+      "type": "veil:blit",
+      "shader": "astronautics:star_rays_composite",
+      "in": "star_rays_buffer",
+      "out": "minecraft:main",
+      "clear": false
+    }
+  ],
+  "framebuffers": {
+    "star_rays_buffer": {
+      "width": "q.screen_width * 0.5",
+      "height": "q.screen_height * 0.5",
+      "depth": false,
+      "filter": { "blur": true },
+      "format": "RGBA16F"
+    }
+  },
+  "textures": {
+    "SceneSampler": { "type": "framebuffer", "name": "minecraft:main" },
+    "SceneDepthSampler": { "type": "framebuffer", "name": "minecraft:main:depth" }
+  },
+  "renderStage": "after_block_entities"
+}

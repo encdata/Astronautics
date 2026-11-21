@@ -1,0 +1,10 @@
+{
+  "parent": "astronautics:life_support",
+  "display": {
+    "icon": { "id": "astronautics:space_suit_chestplate" },
+    "title": { "translate": "advancements.astronautics.suit_up.title" },
+    "description": { "translate": "advancements.astronautics.suit_up.description" },
+    "frame": "task"
+  },
+  "criteria": { "suit": { "trigger": "minecraft:inventory_changed", "conditions": { "items": [{ "items": ["astronautics:space_suit_helmet"] }, { "items": ["astronautics:space_suit_chestplate"] }, { "items": ["astronautics:space_suit_leggings"] }, { "items": ["astronautics:space_suit_boots"] }] } } }
+}

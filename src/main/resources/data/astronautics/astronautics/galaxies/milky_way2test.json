@@ -1,0 +1,350 @@
+{
+  "id": "astronautics:milky_way2test",
+  "name": "Milky Way",
+  "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+  "time_scale": 1000.0,
+  "stars": [
+    {
+      "id": "astronautics:sun2",
+      "name": "Sun",
+      "position": { "x": 2000000000.0, "y": 0.0, "z": 0.0 },
+      "radius": 50000.0,
+      "mass": 1.9884e30,
+      "gravity_scale": 2.28905337328e-06,
+      "luminosity": 1.0,
+      "temperature": 5772.0,
+      "visual": {
+        "texture": "astronautics:textures/celestial/sun.jpg",
+        "glow": true,
+        "rotation_period": 27.3,
+        "emissive_strength": 3.0
+      },
+      "bodies": [
+        {
+          "id": "astronautics:mercury2",
+          "name": "Mercury",
+          "type": "planet",
+          "orbit": { "distance": 220000.0, "period": 87970.0, "initial_angle": 20.0, "eccentricity": 0.2056, "inclination": 7.0, "ascending_node": 48.3, "argument_of_periapsis": 29.1 },
+          "radius": 1000.0,
+          "mass": 3.30104e23,
+          "gravity_scale": 1.70590779715,
+          "environment": { "oxygen": false, "gravity": 3.7, "temperature": 167.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+          "visual": { "texture": "astronautics:textures/celestial/mercury.jpg", "rotation_period": 58.6 }
+        },
+        {
+          "id": "astronautics:venus2",
+          "name": "Venus",
+          "type": "planet",
+          "orbit": { "distance": 320000.0, "period": 224700.0, "initial_angle": 80.0, "eccentricity": 0.0068, "inclination": 3.4, "ascending_node": 76.7, "argument_of_periapsis": 54.9 },
+          "radius": 1600.0,
+          "mass": 4.86732e24,
+          "gravity_scale": 0.710032619776,
+          "environment": { "oxygen": false, "gravity": 8.87, "temperature": 464.0, "pressure": 9200.0, "air_drag": 0.90, "custom_skybox": true, "sky_rotation_axis": "z" },
+          "visual": {
+            "texture": "astronautics:textures/celestial/venus.jpg",
+            "rotation_period": 243.0,
+            "render": { "atmosphere": {
+              "enabled": true, "color": 15245354, "height": 20.0, "radius_offset": 0.0,
+              "density": 0.30, "rayleigh": 0.24, "mie": 0.82,
+              "scattering": {
+                "enabled": true, "rayleigh_red": 0.011, "rayleigh_green": 0.009, "rayleigh_blue": 0.005,
+                "mie_coefficient": 0.032, "rayleigh_scale_height": 15.0, "mie_scale_height": 3.0,
+                "mie_g": 0.72, "sun_intensity": 22.0, "exposure": 1.0
+              }
+            }}
+          }
+        },
+        {
+          "id": "astronautics:earth2",
+          "name": "Earth",
+          "type": "planet",
+          "orbit": { "distance": 420000.0, "period": 365256.0, "initial_angle": 180.0, "eccentricity": 0.0167, "inclination": 0.0, "ascending_node": 0.0, "argument_of_periapsis": 102.9 },
+          "radius": 2000.0,
+          "mass": 5.97219e24,
+          "gravity_scale": 1.0,
+          "environment": { "oxygen": true, "gravity": 9.80665, "temperature": 15.0, "pressure": 101.325, "air_drag": 0.985 },
+          "visual": {
+            "texture": "astronautics:textures/celestial/earth.jpg",
+            "emissive_texture": "astronautics:textures/celestial/earth_night.jpg",
+            "normal_texture": "astronautics:textures/celestial/earth_normal.png",
+            "specular_texture": "astronautics:textures/celestial/earth_specular.png",
+            "emissive_night_only": true,
+            "flip_horizontal": true,
+            "emissive_strength": 1.0,
+            "rotation_period": 1.0,
+            "render": {
+              "atmosphere": {
+                "enabled": true,
+                "color": 4898815,
+              "height": 31.4,
+                "density": 0.14,
+                "rayleigh": 0.9,
+                "mie": 0.12,
+                "scattering": {
+                  "enabled": true,
+                  "rayleigh_red": 0.0058,
+                  "rayleigh_green": 0.0135,
+                  "rayleigh_blue": 0.0331,
+                  "mie_coefficient": 0.021,
+                  "rayleigh_scale_height": 8.0,
+                  "mie_scale_height": 1.2,
+                  "mie_g": 0.76,
+                  "sun_intensity": 22.0,
+                  "exposure": 1.0
+                }
+              }
+            },
+            "layers": [
+              {
+                "texture": "astronautics:textures/celestial/earth_clouds.jpg",
+                "type": "clouds",
+                "opacity": 0.30,
+                "rotation_period": 1.0,
+                "radius_offset": 3.0,
+                "u_speed": 0.004
+              }
+            ]
+          },
+          "bodies": [
+            {
+              "id": "astronautics:moon2",
+              "name": "Moon",
+              "type": "planet",
+              "orbit": { "distance": 26000.0, "period": 27321.661, "initial_angle": 180.0, "eccentricity": 0.055, "inclination": 5.1, "ascending_node": 125.0, "argument_of_periapsis": 318.1 },
+              "radius": 1200.0,
+              "mass": 7.3457891e22,
+              "gravity_scale": 4.83926610601,
+              "environment": { "oxygen": false, "gravity": 1.622, "temperature": -20.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true, "sky_rotation_axis": "z" },
+              "visual": { "texture": "astronautics:textures/celestial/moon.jpg", "rotation_period": 27.3 }
+            }
+          ]
+        },
+        {
+          "id": "astronautics:mars2",
+          "name": "Mars",
+          "type": "planet",
+          "orbit": { "distance": 540000.0, "period": 686980.0, "initial_angle": 250.0, "eccentricity": 0.0934, "inclination": 1.85, "ascending_node": 49.6, "argument_of_periapsis": 286.5 },
+          "radius": 1400.0,
+          "mass": 6.41693e23,
+          "gravity_scale": 1.72978870744,
+          "environment": { "oxygen": false, "gravity": 3.721, "temperature": -63.0, "pressure": 0.636, "air_drag": 0.998, "custom_skybox": true, "sky_rotation_axis": "z" },
+          "visual": {
+            "texture": "astronautics:textures/celestial/mars.jpg",
+            "rotation_period": 1.026,
+            "render": { "atmosphere": {
+                "enabled": true, "color": 10596296, "mie_color": 13075282,
+               "height": 11.0, "radius_offset": 0.0,
+               "density": 0.028, "rayleigh": 0.06, "mie": 0.70,
+               "scattering": {
+                 "enabled": true, "rayleigh_red": 0.012, "rayleigh_green": 0.005, "rayleigh_blue": 0.002,
+                 "mie_coefficient": 0.012, "rayleigh_scale_height": 11.0, "mie_scale_height": 2.0,
+                 "mie_g": 0.68, "sun_intensity": 18.0, "exposure": 1.0
+               }
+            }}
+          }
+        },
+        {
+          "id": "astronautics:jupiter2",
+          "name": "Jupiter",
+          "type": "planet",
+          "orbit": { "distance": 660000.0, "period": 4332590.0, "initial_angle": 310.0, "eccentricity": 0.0489, "inclination": 1.3, "ascending_node": 100.5, "argument_of_periapsis": 273.9 },
+          "radius": 4000.0,
+          "mass": 1.89813e27,
+          "gravity_scale": 0.0318035229358,
+          "environment": { "oxygen": false, "gravity": 24.79, "temperature": -110.0, "pressure": 1000.0, "air_drag": 0.96 },
+          "visual": {
+            "texture": "astronautics:textures/celestial/jupiter.jpg",
+            "rotation_period": 0.414,
+            "render": { "atmosphere": {
+              "enabled": true, "color": 12628642, "height": 45.0, "radius_offset": 0.0,
+              "density": 0.11, "rayleigh": 0.34, "mie": 0.38,
+              "scattering": {
+                "enabled": true, "rayleigh_red": 0.010, "rayleigh_green": 0.008, "rayleigh_blue": 0.005,
+                "mie_coefficient": 0.028, "rayleigh_scale_height": 30.0, "mie_scale_height": 7.0,
+                "mie_g": 0.70, "sun_intensity": 12.0, "exposure": 1.0
+              }
+            }}
+          },
+          "bodies": [
+            {
+              "id": "astronautics:europa2",
+              "name": "Europa",
+              "type": "moon",
+              "orbit": { "distance": 38400.0, "period": 3551.0, "initial_angle": 45.0, "eccentricity": 0.009, "inclination": 0.47, "ascending_node": 0.0, "argument_of_periapsis": 0.0 },
+              "radius": 620.0,
+              "mass": 4.7985738e22,
+              "gravity_scale": 1.60325118858,
+              "environment": { "oxygen": false, "gravity": 1.315, "temperature": -160.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/europa.png", "rotation_period": 3551.0 }
+            },
+            {
+              "id": "astronautics:ganymede2",
+              "name": "Ganymede",
+              "type": "moon",
+              "orbit": { "distance": 60000.0, "period": 7155.0, "initial_angle": 180.0, "eccentricity": 0.0013, "inclination": 0.2, "ascending_node": 0.0, "argument_of_periapsis": 0.0 },
+              "radius": 880.0,
+              "mass": 1.4814786e23,
+              "gravity_scale": 1.13606396534,
+              "environment": { "oxygen": false, "gravity": 1.428, "temperature": -163.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/ganymede.jpg", "rotation_period": 7155.0 }
+            },
+            {
+              "id": "astronautics:callisto2",
+              "name": "Callisto",
+              "type": "moon",
+              "orbit": { "distance": 105000.0, "period": 16689.0, "initial_angle": 300.0, "eccentricity": 0.0074, "inclination": 0.19, "ascending_node": 0.0, "argument_of_periapsis": 0.0 },
+              "radius": 840.0,
+              "mass": 1.0756609e23,
+              "gravity_scale": 1.23297639857,
+              "environment": { "oxygen": false, "gravity": 1.235, "temperature": -139.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/callisto.png", "rotation_period": 16689.0 }
+            }
+          ]
+        },
+        {
+          "id": "astronautics:saturn2",
+          "name": "Saturn",
+          "type": "planet",
+          "orbit": { "distance": 800000.0, "period": 10759220.0, "initial_angle": 35.0, "eccentricity": 0.0565, "inclination": 2.49, "ascending_node": 113.7, "argument_of_periapsis": 339.4 },
+          "radius": 3600.0,
+          "mass": 5.68319e26,
+          "gravity_scale": 0.0362341345566,
+          "environment": { "oxygen": false, "gravity": 10.44, "temperature": -140.0, "pressure": 1000.0, "air_drag": 0.97 },
+          "visual": {
+            "texture": "astronautics:textures/celestial/saturn.jpg",
+            "rotation_period": 0.444,
+            "render": { "atmosphere": {
+              "enabled": true, "color": 13874853, "height": 40.0, "radius_offset": 0.0,
+              "density": 0.09, "rayleigh": 0.3, "mie": 0.34,
+              "scattering": {
+                "enabled": true, "rayleigh_red": 0.009, "rayleigh_green": 0.0075, "rayleigh_blue": 0.0045,
+                "mie_coefficient": 0.024, "rayleigh_scale_height": 28.0, "mie_scale_height": 6.0,
+                "mie_g": 0.70, "sun_intensity": 10.0, "exposure": 1.0
+              }
+            },
+            "geometry": {
+              "axial_tilt": 26.73,
+              "oblateness": 0.098,
+              "rings": [
+                {
+                  "texture": "astronautics:textures/celestial/saturn_rings.png",
+                  "inner_radius": 4000.0,
+                  "outer_radius": 8400.0,
+                  "tilt": 0.0,
+                  "opacity": 1.0,
+                  "thickness": 90.0,
+                  "transmission": 0.0,
+                  "shadow_density": 0.88,
+                  "self_shadow_strength": 0.72
+                }
+              ]
+            }
+            }
+          },
+          "bodies": [
+            {
+              "id": "astronautics:mimas2", "name": "Mimas", "type": "moon",
+              "orbit": { "distance": 11100.0, "period": 942.0, "initial_angle": 30.0 },
+              "radius": 80.0,
+              "mass": 3.7509402e19,
+              "gravity_scale": 1.66197476147,
+              "environment": { "oxygen": false, "gravity": 0.064, "temperature": -200.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/mimas.jpg", "rotation_period": 942.0 }
+            },
+            {
+              "id": "astronautics:enceladus2", "name": "Enceladus", "type": "moon",
+              "orbit": { "distance": 14200.0, "period": 1370.0, "initial_angle": 120.0 },
+              "radius": 100.0,
+              "mass": 1.0803185e20,
+              "gravity_scale": 1.59195668909,
+              "environment": { "oxygen": false, "gravity": 0.113, "temperature": -201.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/enceladus.png", "rotation_period": 1370.0 }
+            },
+            {
+              "id": "astronautics:dione2", "name": "Dione", "type": "moon",
+              "orbit": { "distance": 22500.0, "period": 2737.0, "initial_angle": 210.0 },
+              "radius": 200.0,
+              "mass": 1.0954867e21,
+              "gravity_scale": 1.2892747686,
+              "environment": { "oxygen": false, "gravity": 0.232, "temperature": -186.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/dione.jpg", "rotation_period": 2737.0 }
+            },
+            {
+              "id": "astronautics:rhea2", "name": "Rhea", "type": "moon",
+              "orbit": { "distance": 31500.0, "period": 4518.0, "initial_angle": 290.0 },
+              "radius": 270.0,
+              "mass": 2.3064853e21,
+              "gravity_scale": 1.26994636697,
+              "environment": { "oxygen": false, "gravity": 0.264, "temperature": -174.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/rhea.jpg", "rotation_period": 4518.0 }
+            },
+            {
+              "id": "astronautics:titan2", "name": "Titan", "type": "moon",
+              "orbit": { "distance": 73000.0, "period": 15945.0, "initial_angle": 75.0 },
+              "radius": 700.0,
+              "mass": 1.3451803e23,
+              "gravity_scale": 0.749543588175,
+              "environment": { "oxygen": false, "gravity": 1.352, "temperature": -179.0, "pressure": 146.7, "air_drag": 0.92, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/titan.png", "rotation_period": 15945.0 }
+            },
+            {
+              "id": "astronautics:phoebe2", "name": "Phoebe", "type": "moon",
+              "orbit": { "distance": 770000.0, "period": 550500.0, "initial_angle": 165.0, "inclination": 175.2 },
+              "radius": 70.0,
+              "mass": 8.3123324e18,
+              "gravity_scale": 4.39616390418,
+              "environment": { "oxygen": false, "gravity": 0.049, "temperature": -192.0, "pressure": 0.0, "air_drag": 1.0, "custom_skybox": true },
+              "visual": { "texture": "astronautics:textures/celestial/phoebe.png", "rotation_period": 550500.0 }
+            }
+          ]
+        },
+        {
+          "id": "astronautics:uranus2",
+          "name": "Uranus",
+          "type": "planet",
+          "orbit": { "distance": 940000.0, "period": 30688500.0, "initial_angle": 145.0, "eccentricity": 0.0472, "inclination": 0.77, "ascending_node": 74.0, "argument_of_periapsis": 96.9 },
+          "radius": 2000.0,
+          "mass": 8.68103e25,
+          "gravity_scale": 0.0609415025484,
+          "environment": { "oxygen": false, "gravity": 8.69, "temperature": -195.0, "pressure": 1000.0, "air_drag": 0.97 },
+          "visual": {
+            "texture": "astronautics:textures/celestial/uranus.jpg",
+            "rotation_period": 0.718,
+            "render": { "atmosphere": {
+              "enabled": true, "color": 7325945, "height": 22.0, "radius_offset": 0.0,
+              "density": 0.12, "rayleigh": 0.62, "mie": 0.2,
+              "scattering": {
+                "enabled": true, "rayleigh_red": 0.003, "rayleigh_green": 0.010, "rayleigh_blue": 0.014,
+                "mie_coefficient": 0.014, "rayleigh_scale_height": 22.0, "mie_scale_height": 4.0,
+                "mie_g": 0.68, "sun_intensity": 7.0, "exposure": 1.0
+              }
+            }}
+          }
+        },
+        {
+          "id": "astronautics:neptune2",
+          "name": "Neptune",
+          "type": "planet",
+          "orbit": { "distance": 1080000.0, "period": 60182000.0, "initial_angle": 220.0, "eccentricity": 0.0086, "inclination": 1.77, "ascending_node": 131.8, "argument_of_periapsis": 276.3 },
+          "radius": 1920.0,
+          "mass": 1.02410e26,
+          "gravity_scale": 0.0610857023445,
+          "environment": { "oxygen": false, "gravity": 11.15, "temperature": -200.0, "pressure": 1000.0, "air_drag": 0.97 },
+          "visual": {
+            "texture": "astronautics:textures/celestial/neptune.jpg",
+            "rotation_period": 0.671,
+            "render": { "atmosphere": {
+              "enabled": true, "color": 4056244, "height": 21.0, "radius_offset": 0.0,
+              "density": 0.13, "rayleigh": 0.72, "mie": 0.18,
+              "scattering": {
+                "enabled": true, "rayleigh_red": 0.002, "rayleigh_green": 0.005, "rayleigh_blue": 0.016,
+                "mie_coefficient": 0.012, "rayleigh_scale_height": 20.0, "mie_scale_height": 4.0,
+                "mie_g": 0.68, "sun_intensity": 5.0, "exposure": 1.0
+              }
+            }}
+          }
+        }
+      ]
+    }
+  ]
+}

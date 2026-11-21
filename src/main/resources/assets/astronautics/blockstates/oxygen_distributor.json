@@ -1,0 +1,6 @@
+{
+  "variants": {
+    "powered=false": { "model": "astronautics:block/oxygen_distributor" },
+    "powered=true": { "model": "astronautics:block/oxygen_distributor_powered" }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:breathe_easy",
+  "display": { "icon": { "id": "astronautics:oxygen_distributor" }, "title": { "translate": "advancements.astronautics.the_new_home.title" }, "description": { "translate": "advancements.astronautics.the_new_home.description" }, "frame": "challenge" },
+  "criteria": { "planetary_outpost": { "trigger": "minecraft:impossible" } }
+}

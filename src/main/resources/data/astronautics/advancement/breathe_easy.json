@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:tanked_and_ready",
+  "display": { "icon": { "id": "astronautics:space_suit_helmet" }, "title": { "translate": "advancements.astronautics.breathe_easy.title" }, "description": { "translate": "advancements.astronautics.breathe_easy.description" }, "frame": "goal" },
+  "criteria": { "vacuum": { "trigger": "minecraft:location", "conditions": { "player": { "location": { "dimension": "astronautics:space" }, "equipment": { "head": { "items": ["astronautics:space_suit_helmet"] }, "chest": { "items": ["astronautics:space_suit_chestplate"] }, "legs": { "items": ["astronautics:space_suit_leggings"] }, "feet": { "items": ["astronautics:space_suit_boots"] } } } } } }
+}

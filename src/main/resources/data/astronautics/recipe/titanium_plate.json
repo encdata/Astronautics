@@ -1,0 +1,5 @@
+{
+  "type": "create:pressing",
+  "ingredients": [{"item": "astronautics:titanium_ingot"}],
+  "results": [{"id": "astronautics:titanium_plate"}]
+}

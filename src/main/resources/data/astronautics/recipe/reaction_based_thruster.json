@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["NCN", "TPE", "RUU"],
+  "key": {
+    "N": { "item": "astronautics:nickel_plate" },
+    "C": { "item": "create:brass_casing" },
+    "T": { "item": "astronautics:titanium_plate" },
+    "P": { "item": "create:precision_mechanism" },
+    "E": { "item": "create:electron_tube" },
+    "R": { "item": "create:propeller" },
+    "U": { "item": "create:copper_sheet" }
+  },
+  "result": { "id": "astronautics:reaction_based_thruster", "count": 1 }
+}

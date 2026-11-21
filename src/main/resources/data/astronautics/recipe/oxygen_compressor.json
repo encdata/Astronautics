@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["GGG", "CPB", "CCB"],
+  "key": {
+    "G": { "item": "minecraft:glass" },
+    "C": { "item": "create:copper_casing" },
+    "P": { "item": "create:mechanical_pump" },
+    "B": { "item": "create:brass_sheet" }
+  },
+  "result": { "id": "astronautics:oxygen_compressor", "count": 1 }
+}

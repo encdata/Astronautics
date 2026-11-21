@@ -1,0 +1,9 @@
+{
+  "fluid": "astronautics:methanol",
+  "efficiency": 0.35,
+  "thrust_multiplier": 0.45,
+  "fuel_consumption": 12,
+  "required_thruster_tier": 1,
+  "max_acceleration": 8.3333,
+  "max_speed": 33.3333
+}

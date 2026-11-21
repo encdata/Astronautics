@@ -1,0 +1,5 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [{"item": "astronautics:nickel_ingot"}],
+  "result": {"id": "astronautics:nickel_nugget", "count": 9}
+}

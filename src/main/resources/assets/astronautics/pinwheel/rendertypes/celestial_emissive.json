@@ -1,0 +1,16 @@
+{
+  "format": "POSITION_TEX_COLOR_NORMAL",
+  "mode": "QUADS",
+  "bufferSize": "TRANSIENT",
+  "sort": true,
+  "affectsCrumbling": false,
+  "outline": false,
+  "layers": [
+    { "type": "veil:shader", "name": "astronautics:celestial" },
+    { "type": "minecraft:texture", "texture": "%s", "blur": true, "mipmap": true },
+    { "type": "minecraft:transparency", "mode": "additive" },
+    { "type": "minecraft:cull", "face": "back" },
+    { "type": "minecraft:depth_test", "mode": "lequal" },
+    { "type": "minecraft:write_mask", "color": true, "depth": false }
+  ]
+}

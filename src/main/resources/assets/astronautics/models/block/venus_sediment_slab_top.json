@@ -1,0 +1,2 @@
+{ "parent": "minecraft:block/slab_top", "textures": { "bottom": "astronautics:block/venus_sediment", "side": "astronautics:block/venus_sediment", "top": "astronautics:block/venus_sediment" } }
+

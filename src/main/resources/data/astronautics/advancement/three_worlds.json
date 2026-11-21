@@ -1,0 +1,10 @@
+{
+  "parent": "astronautics:one_small_step",
+  "display": { "icon": { "id": "astronautics:oxygen_tank" }, "title": { "translate": "advancements.astronautics.three_worlds.title" }, "description": { "translate": "advancements.astronautics.three_worlds.description" }, "frame": "challenge" },
+  "criteria": {
+    "moon": { "trigger": "minecraft:impossible" },
+    "mars": { "trigger": "minecraft:impossible" },
+    "venus": { "trigger": "minecraft:impossible" }
+  },
+  "requirements": [["moon"], ["mars"], ["venus"]]
+}

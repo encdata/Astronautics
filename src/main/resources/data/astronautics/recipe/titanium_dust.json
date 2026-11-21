@@ -1,0 +1,10 @@
+{
+  "type": "create:mixing",
+  "heat_requirement": "heated",
+  "ingredients": [
+    {"item": "astronautics:nickel_dust"},
+    {"item": "create:crushed_raw_iron"},
+    {"item": "minecraft:quartz"}
+  ],
+  "results": [{"id": "astronautics:titanium_dust", "count": 2}]
+}

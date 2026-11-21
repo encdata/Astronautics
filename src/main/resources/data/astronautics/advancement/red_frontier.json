@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:one_small_step",
+  "display": { "icon": { "id": "astronautics:mars_stone" }, "title": { "translate": "advancements.astronautics.red_frontier.title" }, "description": { "translate": "advancements.astronautics.red_frontier.description" }, "frame": "task" },
+  "criteria": { "mars": { "trigger": "minecraft:impossible" } }
+}

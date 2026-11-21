@@ -1,0 +1,16 @@
+{
+  "format": "POSITION_TEX_COLOR_NORMAL",
+  "mode": "QUADS",
+  "bufferSize": "TRANSIENT",
+  "sort": false,
+  "affectsCrumbling": false,
+  "outline": false,
+  "layers": [
+    { "type": "veil:shader", "name": "astronautics:reentry_hull" },
+    { "type": "minecraft:cull", "face": "none" },
+    { "type": "minecraft:depth_test", "mode": "lequal" },
+    { "type": "minecraft:transparency", "mode": "additive" },
+    { "type": "minecraft:output", "framebuffer": "minecraft:main" },
+    { "type": "minecraft:write_mask", "color": true, "depth": false }
+  ]
+}

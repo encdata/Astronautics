@@ -1,0 +1,6 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": ["XXX"],
+  "key": { "X":{"item":"astronautics:mars_cobblestone"} },
+  "result": { "id": "astronautics:mars_cobblestone_slab", "count": 6 }
+}

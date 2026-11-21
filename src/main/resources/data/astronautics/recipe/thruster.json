@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["TPT", "NCN", "RFB"],
+  "key": {
+    "T": { "item": "astronautics:titanium_plate" },
+    "P": { "item": "create:precision_mechanism" },
+    "N": { "item": "astronautics:nickel_plate" },
+    "C": { "item": "create:brass_casing" },
+    "R": { "item": "create:propeller" },
+    "F": { "item": "create:fluid_tank" },
+    "B": { "item": "create:brass_sheet" }
+  },
+  "result": { "id": "astronautics:thruster", "count": 1 }
+}

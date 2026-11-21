@@ -1,0 +1,9 @@
+{
+  "type": "create:mixing",
+  "ingredients": [
+    {"item": "create:crushed_raw_iron"},
+    {"item": "create:crushed_raw_copper"},
+    {"item": "create:crushed_raw_zinc"}
+  ],
+  "results": [{"id": "astronautics:nickel_dust", "count": 3}]
+}

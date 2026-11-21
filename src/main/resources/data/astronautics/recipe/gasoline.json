@@ -1,0 +1,9 @@
+{
+  "type": "create:mixing",
+  "ingredients": [
+    {"item": "minecraft:coal"},
+    {"type": "neoforge:single", "amount": 500, "fluid": "astronautics:methanol"},
+    {"type": "neoforge:single", "amount": 500, "fluid": "minecraft:lava"}
+  ],
+  "results": [{"amount": 1000, "id": "astronautics:gasoline"}]
+}

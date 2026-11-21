@@ -1,0 +1,6 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": ["XXX"],
+  "key": { "X":{"item":"astronautics:enstatite"} },
+  "result": { "id": "astronautics:enstatite_slab", "count": 6 }
+}

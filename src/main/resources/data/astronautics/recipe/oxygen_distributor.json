@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [" B ", "SPS", "BBB"],
+  "key": {
+    "B": { "item": "create:brass_sheet" },
+    "S": { "item": "create:steam_engine" },
+    "P": { "item": "create:propeller" }
+  },
+  "result": { "id": "astronautics:oxygen_distributor", "count": 1 }
+}

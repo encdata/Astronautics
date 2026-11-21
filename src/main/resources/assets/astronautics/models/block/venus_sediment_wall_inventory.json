@@ -1,0 +1,2 @@
+{ "parent": "minecraft:block/wall_inventory", "textures": { "wall": "astronautics:block/venus_sediment" } }
+

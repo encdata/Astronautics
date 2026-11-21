@@ -1,0 +1,5 @@
+{
+  "parent": "astronautics:ground_control",
+  "display": { "icon": { "id": "astronautics:thruster" }, "title": { "translate": "advancements.astronautics.ignition.title" }, "description": { "translate": "advancements.astronautics.ignition.description" }, "frame": "task" },
+  "criteria": { "thruster": { "trigger": "minecraft:impossible" } }
+}

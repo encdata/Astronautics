@@ -1,0 +1,10 @@
+{
+  "thruster_loop": {
+    "sounds": [
+      {
+        "name": "astronautics:thruster_loop",
+        "stream": true
+      }
+    ]
+  }
+}
