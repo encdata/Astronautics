@@ -106,7 +106,8 @@ public final class AstronauticsPlayerTickHandler {
             SpaceGridAddress playerGrid = attachedInMainSpace
                     ? SpaceGrids.shipGrid((ServerLevel) level, (ServerSubLevel) containing)
                     : detachedFromShip ? state.spacePosition().grid()
-                    : SpaceGrids.isMainSpace(level) ? SpaceGrids.playerAnchorGrid(player)
+                    : SpaceGrids.isMainSpace(level) ? player.isPassenger()
+                    ? SpaceProjection.frameGrid(player) : SpaceGrids.playerAnchorGrid(player)
                     : SpaceGridLevelFactory.addressOf(player.server, level.dimension());
             if (playerGrid == null) {
                 playerGrid = SpaceProjection.frameGrid(state.spacePosition(),
@@ -119,6 +120,7 @@ public final class AstronauticsPlayerTickHandler {
                     ? state.spacePosition()
                     : SpacePosition.normalize(playerGrid, player.getX(), player.getY(), player.getZ());
             boolean wrap = !attachedInMainSpace
+                    && (!SpaceGrids.isMainSpace(level) || detachedFromShip)
                     && (position.x() != player.getX() || position.y() != player.getY()
                     || position.z() != player.getZ());
             if (wrap) {

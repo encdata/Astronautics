@@ -520,14 +520,14 @@ public final class SpaceGrids {
                 SpaceConstants.SHIP_GRID_ATTACH_RANGE);
         if (nearbyShip != null) {
             SpaceGridAddress target = shipGrid((ServerLevel) nearbyShip.getLevel(), nearbyShip);
-            rebaseEntityFrame(entity, target, logicalPosition);
+            rebaseWithPassengers(entity, target, logicalPosition);
             set(entity, simulationGrid((ServerLevel) nearbyShip.getLevel(), nearbyShip));
             return;
         }
         ServerPlayer nearbyPlayer = nearestPlayer(entity, logicalPosition);
         if (nearbyPlayer != null) {
             SpaceGridAddress target = playerAnchorGrid(nearbyPlayer);
-            rebaseEntityFrame(entity, target, logicalPosition);
+            rebaseWithPassengers(entity, target, logicalPosition);
             set(entity, target);
             return;
         }
@@ -535,7 +535,7 @@ public final class SpaceGrids {
             SpacePosition entityAnchor = nearbyEntityAnchor(entity, logicalPosition);
             if (!entityAnchor.equals(logicalPosition)) {
                 SpaceGridAddress target = entityAnchor.grid();
-                rebaseEntityFrame(entity, target, logicalPosition);
+                rebaseWithPassengers(entity, target, logicalPosition);
                 set(entity, target);
                 return;
             }
@@ -546,16 +546,22 @@ public final class SpaceGrids {
         }
 
         SpacePosition position = SpacePosition.normalize(positionGrid, x, y, z);
-        for (Entity passenger : entity.getIndirectPassengers()) {
-            if (passenger instanceof ServerPlayer player) {
-                rebasePlayer(player, position.grid());
-                continue;
-            }
-            rebaseEntityFrame(passenger, position.grid(), SpaceEntityState.position(passenger));
-            set(passenger, position.grid());
-        }
-        rebaseEntityFrame(entity, position.grid(), position);
+        rebaseWithPassengers(entity, position.grid(), position);
         set(entity, position.grid());
+    }
+
+    private static void rebaseWithPassengers(Entity entity, SpaceGridAddress target, SpacePosition logicalPosition) {
+        if (!target.equals(frameOf(entity))) {
+            for (Entity passenger : entity.getIndirectPassengers()) {
+                if (passenger instanceof ServerPlayer player) {
+                    rebasePlayer(player, target);
+                    continue;
+                }
+                rebaseEntityFrame(passenger, target, SpaceEntityState.position(passenger));
+                set(passenger, target);
+            }
+        }
+        rebaseEntityFrame(entity, target, logicalPosition);
     }
 
     private static ServerPlayer nearestPlayer(Entity entity, SpacePosition position) {
