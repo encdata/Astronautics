@@ -6,6 +6,7 @@ import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -107,7 +108,9 @@ public final class SpaceShipIntegration {
 
     private static double logicalDistanceToShipSqr(Entity entity, ServerSubLevel ship, double maxDistance) {
         if (!Double.isFinite(maxDistance) || maxDistance < 0.0) return Double.POSITIVE_INFINITY;
-        SpacePosition entityPosition = SpaceEntityState.position(entity);
+        SpacePosition entityPosition = entity instanceof ServerPlayer player && SpaceConstants.isSpace(player.level())
+                ? SpaceProjection.observerPosition(player)
+                : SpaceEntityState.position(entity);
         SpacePosition shipPosition = SpaceProjection.shipPosition(ship);
         Vector3dc pose = ship.logicalPose().position();
         double minX = 0.0, minY = 0.0, minZ = 0.0, maxX = 0.0, maxY = 0.0, maxZ = 0.0;

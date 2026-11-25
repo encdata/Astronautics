@@ -6,6 +6,7 @@ import com.encdata.astronautics.space.SpaceGridDirectory;
 import com.encdata.astronautics.space.SpaceGridLevelFactory;
 import com.encdata.astronautics.space.SpaceGridShipData;
 import com.encdata.astronautics.space.SpaceGridFrameData;
+import com.encdata.astronautics.space.SpaceGridPhysicsPipelineProvider;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -18,6 +19,30 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(value = SubLevelContainer.class, remap = false)
 public abstract class SableGridShipOwnerMixin {
+    @Inject(
+            method = "removeSubLevel(Ldev/ryanhcode/sable/sublevel/SubLevel;Ldev/ryanhcode/sable/sublevel/storage/SubLevelRemovalReason;)V",
+            at = @At("HEAD"),
+            remap = false
+    )
+    private void astronautics$beginUnload(SubLevel subLevel, SubLevelRemovalReason reason, CallbackInfo ci) {
+        if (reason == SubLevelRemovalReason.UNLOADED && subLevel instanceof ServerSubLevel ship
+                && ship.getLevel() instanceof ServerLevel level
+                && level.dimension().equals(SpaceConstants.SPACE_LEVEL)) {
+            SpaceGridPhysicsPipelineProvider.beginShipUnload(ship.getUniqueId());
+        }
+    }
+
+    @Inject(
+            method = "removeSubLevel(Ldev/ryanhcode/sable/sublevel/SubLevel;Ldev/ryanhcode/sable/sublevel/storage/SubLevelRemovalReason;)V",
+            at = @At("RETURN"),
+            remap = false
+    )
+    private void astronautics$endUnload(SubLevel subLevel, SubLevelRemovalReason reason, CallbackInfo ci) {
+        if (subLevel instanceof ServerSubLevel ship) {
+            SpaceGridPhysicsPipelineProvider.endShipUnload(ship.getUniqueId());
+        }
+    }
+
     @Inject(
             method = "removeSubLevel(Ldev/ryanhcode/sable/sublevel/SubLevel;Ldev/ryanhcode/sable/sublevel/storage/SubLevelRemovalReason;)V",
             at = @At("RETURN"),

@@ -9,6 +9,7 @@ import net.minecraft.world.level.Level;
 public final class SpaceConstants {
     public static final double SHIP_SEARCH_DISTANCE = 32.0;
     public static final double SHIP_GRID_ATTACH_RANGE = 1_000.0;
+    public static final double GRID_MERGE_RANGE = SHIP_SEARCH_DISTANCE;
     public static final double SHIP_TRACKING_RANGE = 10_000.0;
     public static final ResourceKey<Level> SPACE_LEVEL = ResourceKey.create(
             Registries.DIMENSION,

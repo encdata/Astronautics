@@ -59,14 +59,8 @@ public final class AstronauticsPlayerTickHandler {
             var containing = SpaceShipIntegration.containing(player);
             if (!(containing instanceof ServerSubLevel ship)
                     || !SpaceShipIntegration.isWithinRange(
-                    player, ship, SpaceConstants.SHIP_GRID_ATTACH_RANGE)) {
-                var container = SubLevelContainer.getContainer(level);
-                var remembered = container == null || state.shipId() == null
-                        ? null : container.getSubLevel(state.shipId());
-                containing = remembered instanceof ServerSubLevel ship
-                        && SpaceShipIntegration.isWithinRange(player, ship, SpaceConstants.SHIP_GRID_ATTACH_RANGE)
-                        ? ship
-                        : SpaceShipIntegration.findLiveShip(player, SpaceConstants.SHIP_GRID_ATTACH_RANGE);
+                    player, ship, SpaceConstants.GRID_MERGE_RANGE)) {
+                containing = null;
             }
             boolean attachedInMainSpace = containing instanceof ServerSubLevel
                     && SpaceGrids.isMainSpace(level);
@@ -113,8 +107,9 @@ public final class AstronauticsPlayerTickHandler {
                 playerGrid = SpaceProjection.frameGrid(state.spacePosition(),
                         player.getX(), player.getY(), player.getZ());
             }
-            if (SpaceGrids.isMainSpace(level) && !detachedFromShip) {
-                SpaceGrids.alignPlayerFrame(player, playerGrid);
+            if (SpaceGrids.isMainSpace(level) && !detachedFromShip
+                    && !SpaceGrids.alignPlayerFrame(player, playerGrid)) {
+                playerGrid = SpaceProjection.frameGrid(player);
             }
             SpacePosition position = detachedFromShip
                     ? state.spacePosition()
@@ -124,8 +119,12 @@ public final class AstronauticsPlayerTickHandler {
                     && (position.x() != player.getX() || position.y() != player.getY()
                     || position.z() != player.getZ());
             if (wrap) {
-                if (SpaceGrids.isMainSpace(level)) SpaceGrids.rebasePlayer(player, position.grid());
-                if (SpaceGrids.isMainSpace(level) && !player.isPassenger()) {
+                boolean rebased = !SpaceGrids.isMainSpace(level)
+                        || SpaceGrids.rebasePlayer(player, position.grid());
+                if (!rebased) {
+                    position = SpaceProjection.observerPosition(player);
+                    playerGrid = position.grid();
+                } else if (SpaceGrids.isMainSpace(level) && !player.isPassenger()) {
                     SpaceGrids.moveToFrame(player, position.x(), position.y(), position.z());
                 } else {
                     Vec3 velocity = player.getDeltaMovement();

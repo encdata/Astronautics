@@ -54,30 +54,29 @@ import java.util.function.Supplier;
 import java.util.UUID;
 
 final class SpaceGridPhysicsPipeline implements InvocationHandler {
-    private static final double FRAME_REBASE_DISTANCE = SpacePhysicsFrameGrid.SPACING * 0.375;
-    private static final double FRAME_JOIN_DISTANCE = FRAME_REBASE_DISTANCE * 0.5;
-    private static final double FRAME_MERGE_SPREAD = SpaceConstants.SHIP_GRID_ATTACH_RANGE;
-    private static final double FRAME_SPLIT_SPREAD = FRAME_MERGE_SPREAD * 1.25;
     private static final double GRID_IMAGE_RANGE = 4096.0;
-    private static final double ROPE_RANGE = 1.0e12;
     private static final double ANCHOR_RANGE = 1.0e12;
-    private static final int FRAME_HOST_SEARCH = 64;
     private static final ThreadLocal<Map<UUID, SpacePosition>> TRANSFER_POSITIONS = new ThreadLocal<>();
 
     private final ServerLevel spaceLevel;
     private final PhysicsPipeline pipeline;
+    private final SpaceGridFrameRegistry frames;
+    private final SpaceGridFrameTransitions transitions;
     private final Map<Long, PhysicsPipeline> sectionOwners = new HashMap<>();
     private final Map<KinematicContraption, PhysicsPipeline> contraptionOwners = new HashMap<>();
     private final Map<UUID, List<GridRope>> framedRopes = new HashMap<>();
+    private final Set<GridRope> ropes = new HashSet<>();
     private final List<WorldConstraint> worldConstraints = new ArrayList<>();
     private final Set<UUID> teleportedShips = new HashSet<>();
-    private boolean teleporting;
     private final Map<ShipConstraint, Set<UUID>> shipConstraints = new HashMap<>();
     private long lastSkippedConstraintWarning = Long.MIN_VALUE;
 
     SpaceGridPhysicsPipeline(ServerLevel spaceLevel, PhysicsPipeline pipeline) {
         this.spaceLevel = spaceLevel;
         this.pipeline = pipeline;
+        this.frames = new SpaceGridFrameRegistry(spaceLevel);
+        this.transitions = new SpaceGridFrameTransitions(this, spaceLevel, frames,
+                contraptionOwners, teleportedShips);
     }
 
     static <T> T withTransferPositions(Map<UUID, SpacePosition> positions, Supplier<T> action) {
@@ -102,7 +101,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String name = method.getName();
-        if (name.equals("tick")) maintainFrames();
+        if (name.equals("tick")) transitions.maintainFrames();
         if (isPipelineLifecycle(name)) {
             for (PhysicsPipeline host : activeHostPipelines()) invoke(host, method, args);
         }
@@ -215,6 +214,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
     private void addShip(ServerSubLevel ship, Pose3dc sourcePose) {
         UUID id = ship.getUniqueId();
         SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
+        SpaceGridAddress previousShipAddress = directory.shipAddress(id);
         Map<UUID, SpacePosition> transferPositions = TRANSFER_POSITIONS.get();
         SpacePosition transferPosition = transferPositions == null ? null : transferPositions.get(id);
         SpaceGridAddress logicalOwner = transferPosition == null
@@ -250,60 +250,57 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
 
         SpaceGridAddress previousFrameOwner = directory.frameOwnerAddress(id);
-        Optional<FrameLocation> existingFrame = existingFrame(id, previousFrameOwner);
+        Optional<FrameLocation> existingFrame = frames.existingFrame(id, previousFrameOwner);
         if (existingFrame.isPresent() && SpacePhysicsFrameGrid.toPhysicsPosition(
                 existingFrame.get().frame().cell(), existingFrame.get().frame().origin(), position).isEmpty()) {
-            dropMembership(existingFrame.get().level(), id);
+            frames.dropMembership(existingFrame.get().level(), id);
             existingFrame = Optional.empty();
+            previousFrameOwner = null;
         }
-        if (existingFrame.isEmpty()) existingFrame = findFrame(position, projection, null);
+        if (existingFrame.isEmpty()) existingFrame = frames.findFrame(position, projection, null);
+        boolean allocated = existingFrame.isEmpty();
         FrameLocation location = existingFrame.isPresent() ? existingFrame.get()
-                : allocateFrame(position, projection, id);
-        SpaceGridDirectory.get(spaceLevel).setShipAddress(id, logicalOwner);
-        SpaceGridDirectory.get(spaceLevel).setFrameOwnerAddress(id,
-                SpaceGridLevelFactory.addressOf(spaceLevel.getServer(), location.level().dimension()));
-        if (!location.frame().ships().contains(id)) {
-            SpaceGridFrameData.get(location.level()).addShip(location.frame().id(), id);
-        }
+                : frames.allocate(position, projection, id);
+        boolean hadMembership = !allocated && location.frame().ships().contains(id);
+        PhysicsPipeline host = null;
+        boolean addAttempted = false;
+        try {
+            ServerLevel stateLevel = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), logicalOwner);
+            host = rawPipeline(location.level());
+            directory.setShipAddress(id, logicalOwner);
+            directory.setFrameOwnerAddress(id,
+                    SpaceGridLevelFactory.addressOf(spaceLevel.getServer(), location.level().dimension()));
+            if (!allocated && !hadMembership) {
+                SpaceGridFrameData.get(location.level()).addShip(location.frame().id(), id);
+            }
 
-        ServerLevel stateLevel = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), logicalOwner);
-        SpaceGridShipData.get(stateLevel).put(id, state);
-        PhysicsPipeline host = rawPipeline(location.level());
-        host.add(ship, physicsPose(location.frame(), pose, position));
-        ship.logicalPose().position().set(projectionPosition(location.frame(), position));
-        ship.logicalPose().orientation().set(pose.orientation());
-    }
-
-    private Optional<FrameLocation> existingFrame(UUID shipId, SpaceGridAddress frameOwner) {
-        if (frameOwner == null) return Optional.empty();
-        ServerLevel level = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner);
-        return SpaceGridFrameData.get(level).frameForShip(shipId)
-                .map(frame -> new FrameLocation(level, frame));
-    }
-
-    private Optional<FrameLocation> findFrame(SpacePosition position, SpaceGridAddress projection,
-                                              UUID excludedFrame) {
-        FrameLocation nearest = null;
-        double nearestDistance = Double.POSITIVE_INFINITY;
-        for (ServerLevel level : spaceLevel.getServer().getAllLevels()) {
-            if (!SpaceConstants.isGridLevel(level.dimension())) continue;
-            for (SpaceGridFrameData.Frame frame : SpaceGridFrameData.get(level).frames()) {
-                if (frame.id().equals(excludedFrame) || !frame.projectionGrid().equals(projection)) continue;
-                Optional<SpaceVec3> relative = frame.origin().deltaWithin(position,
-                        Math.sqrt(3.0) * FRAME_JOIN_DISTANCE);
-                if (relative.isEmpty()) continue;
-                SpaceVec3 delta = relative.get();
-                if (Math.abs(delta.x()) > FRAME_JOIN_DISTANCE
-                        || Math.abs(delta.y()) > FRAME_JOIN_DISTANCE
-                        || Math.abs(delta.z()) > FRAME_JOIN_DISTANCE) continue;
-                double distance = delta.x() * delta.x() + delta.y() * delta.y() + delta.z() * delta.z();
-                if (distance < nearestDistance) {
-                    nearest = new FrameLocation(level, frame);
-                    nearestDistance = distance;
+            addAttempted = true;
+            host.add(ship, SpaceGridFrameCoordinates.toPhysicsPose(location.frame(), pose, position));
+            ship.logicalPose().position().set(
+                    SpaceGridFrameCoordinates.toProjectionPosition(location.frame(), position));
+            ship.logicalPose().orientation().set(pose.orientation());
+            SpaceGridShipData.get(stateLevel).put(id, state);
+        } catch (RuntimeException | Error failure) {
+            if (addAttempted && host != null) {
+                try {
+                    host.remove(ship);
+                } catch (RuntimeException | Error rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
                 }
             }
+            if (!hadMembership) {
+                try {
+                    SpaceGridFrameData.get(location.level()).removeShip(id);
+                } catch (RuntimeException | Error rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+            }
+            if (previousShipAddress == null) directory.removeShipAddress(id);
+            else directory.setShipAddress(id, previousShipAddress);
+            if (previousFrameOwner == null) directory.removeFrameOwner(id);
+            else directory.setFrameOwnerAddress(id, previousFrameOwner);
+            throw failure;
         }
-        return Optional.ofNullable(nearest);
     }
 
     private Object invokeShipMethod(PhysicsPipeline host, ServerSubLevel ship, Method method, Object[] args)
@@ -314,12 +311,30 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         SpaceGridAddress frameOwner = directory.frameOwnerAddress(id);
         if (owner == null || frameOwner == null) return invoke(pipeline, method, args);
 
-        SpaceGridFrameData.Frame frame = frame(id, frameOwner);
+        SpaceGridFrameData.Frame frame = method.getName().equals("remove") ? null : frame(id, frameOwner);
         switch (method.getName()) {
             case "remove" -> {
-                Object result = invoke(host, method, args);
-                releaseSections(ship);
-                dropMembership(SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner), id);
+                boolean unloading = SpaceGridPhysicsPipelineProvider.consumeShipUnload(id);
+                List<KinematicContraption> attached = contraptionsFor(ship, host);
+                List<KinematicContraption> removed = new ArrayList<>();
+                try {
+                    for (KinematicContraption contraption : attached) {
+                        host.remove(contraption);
+                        removed.add(contraption);
+                        contraptionOwners.remove(contraption);
+                    }
+                } catch (RuntimeException | Error failure) {
+                    restoreContraptions(host, removed, failure);
+                    throw failure;
+                }
+                Object result;
+                try {
+                    result = invoke(host, method, args);
+                } catch (RuntimeException | Error failure) {
+                    restoreContraptions(host, removed, failure);
+                    throw failure;
+                }
+                cleanupRemovedShip(ship, id, frameOwner, !unloading);
                 return result;
             }
             case "wakeUp", "onStatsChanged", "getLinearVelocity", "getAngularVelocity",
@@ -335,16 +350,16 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                     FrameLocation location = new FrameLocation(
                             SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner), frame);
                     if ((frame.ships().size() > 1 && !frame.constrained())
-                            || !rebaseForTeleport(ship, frameOwner, frame, position)) {
+                            || !transitions.rebaseForTeleport(ship, frameOwner, frame, position)) {
                         Pose3d target = new Pose3d(new Vector3d(position.x(), position.y(), position.z()),
                                 new Quaterniond((org.joml.Quaterniondc) args[2]),
                                 new Vector3d(ship.logicalPose().rotationPoint()),
                                 new Vector3d(ship.logicalPose().scale()));
-                        teleporting = true;
+                        transitions.setTeleporting(true);
                         try {
-                            moveToOwnFrame(ship, location, target, position);
+                            transitions.moveToOwnFrame(ship, location, target, position);
                         } finally {
-                            teleporting = false;
+                            transitions.setTeleporting(false);
                         }
                     }
                     host = hostPipeline(ship);
@@ -352,12 +367,12 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                     frame = frame(id, frameOwner);
                     physics = SpacePhysicsFrameGrid.toPhysicsPosition(frame.cell(), frame.origin(), position);
                 }
-                Vector3d translated = vector(physics.orElseThrow());
+                Vector3d translated = SpaceGridFrameCoordinates.toVector(physics.orElseThrow());
                 Object[] translatedArgs = args.clone();
                 translatedArgs[1] = translated;
                 Object result = invoke(host, method, translatedArgs);
                 teleportedShips.add(id);
-                ship.logicalPose().position().set(projectionPosition(frame, position));
+                ship.logicalPose().position().set(SpaceGridFrameCoordinates.toProjectionPosition(frame, position));
                 ship.logicalPose().orientation().set((org.joml.Quaterniondc) args[2]);
                 storePose(ship, owner, position, new Quaterniond((org.joml.Quaterniondc) args[2]));
                 return result;
@@ -368,9 +383,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             case "readPose" -> {
                 Pose3d physical = new Pose3d();
                 host.readPose(ship, physical);
-                SpacePosition position = SpacePhysicsFrameGrid.toLogicalPosition(
-                        frame.cell(), frame.origin(), new SpaceVec3(
-                                physical.position().x, physical.position().y, physical.position().z));
+                SpacePosition position = SpaceGridFrameCoordinates.toLogicalPosition(frame, physical.position());
                 Quaterniond orientation = new Quaterniond(physical.orientation());
                 SpaceGridAddress currentProjection = frame.projectionGrid();
                 Optional<SpacePosition> center = averageFramePosition(frame, id, position);
@@ -382,7 +395,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                     frame = SpaceGridFrameData.get(SpaceGridLevelFactory.getOrCreate(
                             spaceLevel.getServer(), frameOwner)).setProjectionGrid(frame.id(), projection);
                 }
-                Vector3d projected = projectionPosition(frame, position);
+                Vector3d projected = SpaceGridFrameCoordinates.toProjectionPosition(frame, position);
                 if (!teleportedShips.remove(id)) carryAcrossProjection(ship, frame, projected);
                 Pose3d logical = new Pose3d(
                         projected, orientation,
@@ -391,8 +404,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 ship.logicalPose().orientation().set(orientation);
                 ((Pose3d) args[1]).set(logical);
                 storePose(ship, owner, position, orientation);
-                if (needsReframe(frame, position)) {
-                    rebaseFrame(frameOwner, frame);
+                if (transitions.needsReframe(frame, position)) {
+                    transitions.rebaseFrame(frameOwner, frame);
                 }
                 return args[1];
             }
@@ -400,7 +413,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         return invoke(host, method, args);
     }
 
-    private void carryAcrossProjection(ServerSubLevel ship, SpaceGridFrameData.Frame frame, Vector3d projected) {
+    void carryAcrossProjection(ServerSubLevel ship, SpaceGridFrameData.Frame frame, Vector3d projected) {
         Vector3d last = ((Pose3d) ship.lastPose()).position();
         long gridX = Math.round((projected.x - last.x) / SpacePosition.GRID_SIZE);
         long gridY = Math.round((projected.y - last.y) / SpacePosition.GRID_SIZE);
@@ -415,18 +428,21 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 || Math.abs(center.y - last.y) > SpacePosition.GRID_HALF_SIZE
                 || Math.abs(center.z - last.z) > SpacePosition.GRID_HALF_SIZE;
         if (boundsMoved) area = area.move(-jump.x, -jump.y, -jump.z);
-        last.add(jump.x, jump.y, jump.z);
 
-        if (!Double.isFinite(area.getSize()) || area.getSize() > SpacePhysicsFrameGrid.SPACING) return;
+        if (!Double.isFinite(area.getSize())) {
+            last.add(jump.x, jump.y, jump.z);
+            return;
+        }
         SpaceGridAddress to = frame.projectionGrid();
         SpaceGridAddress from = to.offset(BigInteger.valueOf(gridX), BigInteger.valueOf(gridY),
                 BigInteger.valueOf(gridZ));
         SpaceGrids.carryEntities(spaceLevel, area.inflate(SpaceConstants.SHIP_GRID_ATTACH_RANGE), from, to, jump);
+        last.add(jump.x, jump.y, jump.z);
     }
 
-    private void setLogicalPosition(ServerSubLevel ship, SpaceGridFrameData.Frame frame, SpacePosition position) {
-        Vector3d projected = projectionPosition(frame, position);
-        if (!teleporting) carryAcrossProjection(ship, frame, projected);
+    void setLogicalPosition(ServerSubLevel ship, SpaceGridFrameData.Frame frame, SpacePosition position) {
+        Vector3d projected = SpaceGridFrameCoordinates.toProjectionPosition(frame, position);
+        if (!transitions.isTeleporting()) carryAcrossProjection(ship, frame, projected);
         ship.logicalPose().position().set(projected);
     }
 
@@ -449,7 +465,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                         + " do not both have physics frames");
             }
             if (!frame(ship.getUniqueId(), ownerA).id().equals(frame(shipB.getUniqueId(), ownerB).id())) {
-                if (!mergeFrames(ship, shipB)) {
+                if (!transitions.mergeFrames(ship, shipB)) {
                     throw new FrameMismatch("ships " + ship.getUniqueId() + " and " + shipB.getUniqueId()
                             + " cannot share one physics frame");
                 }
@@ -483,7 +499,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 });
     }
 
-    private void refreshConstrainedFrames(Map<UUID, ServerSubLevel> ships) {
+    void refreshConstrainedFrames(Map<UUID, ServerSubLevel> ships) {
         shipConstraints.entrySet().removeIf(entry -> !entry.getKey().isLive());
         worldConstraints.removeIf(constraint -> !constraint.isLive());
         Set<UUID> held = new HashSet<>();
@@ -496,7 +512,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 }
             }
         }
-        for (FrameLocation location : activeFrames(ships.keySet())) {
+        for (FrameLocation location : frames.activeFrames(ships.keySet())) {
             if (!location.frame().constrained()) continue;
             boolean anyHeld = false;
             for (UUID shipId : location.frame().ships()) {
@@ -507,6 +523,47 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             }
             if (!anyHeld) SpaceGridFrameData.get(location.level()).setConstrained(location.frame().id(), false);
         }
+    }
+
+    void migrateConstraints(ServerSubLevel ship, FrameLocation target, Set<UUID> movingShips) {
+        boolean constrained = false;
+        for (WorldConstraint constraint : List.copyOf(worldConstraints)) {
+            if (constraint.ship != ship) continue;
+            try {
+                constraint.moveTo(rawPipeline(target.level()), target.level());
+                constrained |= constraint.isLive();
+            } catch (RuntimeException | Error failure) {
+                constraint.retire();
+                Astronautics.LOGGER.warn("Could not move a world constraint with ship {}", ship.getUniqueId(), failure);
+            }
+        }
+
+        SpaceGridAddress targetAddress = SpaceGridLevelFactory.addressOf(
+                spaceLevel.getServer(), target.level().dimension());
+        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
+        for (Map.Entry<ShipConstraint, Set<UUID>> entry : List.copyOf(shipConstraints.entrySet())) {
+            Set<UUID> ids = entry.getValue();
+            if (ids.stream().noneMatch(movingShips::contains)) continue;
+            boolean pending = movingShips.stream().anyMatch(id ->
+                    !SpaceGridFrameTransitions.isShipOwnedBy(directory, id, targetAddress));
+            if (pending) continue;
+
+            ShipConstraint constraint = entry.getKey();
+            if (ids.stream().allMatch(id ->
+                    SpaceGridFrameTransitions.isShipOwnedBy(directory, id, targetAddress))) {
+                try {
+                    constraint.moveTo(rawPipeline(target.level()), target.level());
+                    constrained |= constraint.isLive();
+                } catch (RuntimeException | Error failure) {
+                    constraint.retire();
+                    Astronautics.LOGGER.warn("Could not move a ship constraint into physics frame {}",
+                            target.frame().id(), failure);
+                }
+            } else {
+                constraint.retire();
+            }
+        }
+        if (constrained) SpaceGridFrameData.get(target.level()).markConstrained(target.frame().id());
     }
 
     private static final class FrameMismatch extends RuntimeException {
@@ -522,13 +579,13 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         PhysicsConstraintConfiguration<?> config = (PhysicsConstraintConfiguration<?>) args[2];
         alignProjection(ship);
         WorldConstraint constraint = new WorldConstraint(ship, worldFirst, method, config);
-        constraint.build(host, frameOf(ship).level());
+        if (!constraint.build(host, frameOf(ship).level())) return inertHandle(config);
         markConstraint(args[0], args[1]);
         worldConstraints.add(constraint);
         return constraint.handle;
     }
 
-    private void reanchorWorldConstraints(FrameLocation location) {
+    void reanchorWorldConstraints(FrameLocation location) {
         PhysicsPipeline host = rawPipeline(location.level());
         for (WorldConstraint constraint : List.copyOf(worldConstraints)) {
             if (location.frame().ships().contains(constraint.ship.getUniqueId())) {
@@ -625,17 +682,17 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         SpaceGridFrameData.Frame updated = SpaceGridFrameData.get(location.level())
                 .setProjectionGrid(location.frame().id(), desired);
         PhysicsPipeline host = rawPipeline(location.level());
-        Map<UUID, ServerSubLevel> ships = loadedShips();
+        Map<UUID, ServerSubLevel> ships = frames.loadedShips();
         for (UUID shipId : updated.ships()) {
             ServerSubLevel member = ships.get(shipId);
             if (member == null || member.isRemoved()) continue;
-            setLogicalPosition(member, updated, readShipPose(host, updated, member).position());
+            setLogicalPosition(member, updated, transitions.readShipPose(host, updated, member).position());
         }
     }
 
     private Optional<SpacePosition> averageFramePosition(SpaceGridFrameData.Frame frame,
                                                          UUID updatedShip, SpacePosition updatedPosition) {
-        Map<UUID, ServerSubLevel> ships = loadedShips();
+        Map<UUID, ServerSubLevel> ships = frames.loadedShips();
         List<SpacePosition> positions = new ArrayList<>(frame.ships().size());
         for (UUID shipId : frame.ships()) {
             ServerSubLevel member = ships.get(shipId);
@@ -664,7 +721,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
         SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
         boolean playerNearby = grid != null;
-        for (ServerSubLevel ship : loadedShips().values()) {
+        for (ServerSubLevel ship : frames.loadedShips().values()) {
             if (directory.shipAddress(ship.getUniqueId()) == null) continue;
             double distance = ship.logicalPose().position().distanceSquared(position);
             if (!playerNearby && distance < nearest) {
@@ -682,733 +739,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         return grid == null ? SpaceGridAddress.ORIGIN : grid;
     }
 
-    private void maintainFrames() {
-        Map<UUID, ServerSubLevel> ships = loadedShips();
-        teleportedShips.retainAll(ships.keySet());
-        if (ships.isEmpty()) {
-            refreshConstrainedFrames(ships);
-            return;
-        }
-        for (FrameLocation location : activeFrames(ships.keySet())) pruneFrame(location, ships);
-        refreshConstrainedFrames(ships);
-        splitSpreadFrames(ships);
-        mergeNearbyFrames(ships);
-    }
-
-    private Map<UUID, ServerSubLevel> loadedShips() {
-        SubLevelContainer container = SubLevelContainer.getContainer(spaceLevel);
-        if (container == null) return Map.of();
-        Map<UUID, ServerSubLevel> ships = new HashMap<>();
-        for (Object object : container.getAllSubLevels()) {
-            if (object instanceof ServerSubLevel ship) ships.put(ship.getUniqueId(), ship);
-        }
-        return ships;
-    }
-
-    private FrameLocation pruneFrame(FrameLocation location, Map<UUID, ServerSubLevel> ships) {
-        for (UUID shipId : location.frame().ships()) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null) dropMembership(location.level(), shipId);
-        }
-        return SpaceGridFrameData.get(location.level()).frame(location.frame().id())
-                .map(frame -> new FrameLocation(location.level(), frame))
-                .orElse(null);
-    }
-
-    private void dropMembership(ServerLevel frameLevel, UUID shipId) {
-        SpaceGridFrameData.get(frameLevel).removeShip(shipId);
-        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
-        SpaceGridAddress levelAddress = SpaceGridLevelFactory.addressOf(spaceLevel.getServer(), frameLevel.dimension());
-        if (levelAddress.equals(directory.frameOwnerAddress(shipId))) directory.removeFrameOwner(shipId);
-    }
-
-    private FrameLocation allocateFrame(SpacePosition position, SpaceGridAddress projection, UUID shipId) {
-        Map<UUID, ServerSubLevel> ships = loadedShips();
-        ServerLevel level = frameHost(position.grid(), ships);
-        return new FrameLocation(level, SpaceGridFrameData.get(level).allocate(position, projection, shipId));
-    }
-
-    private ServerLevel frameHost(SpaceGridAddress preferred, Map<UUID, ServerSubLevel> ships) {
-        for (int step = 0; step < FRAME_HOST_SEARCH; step++) {
-            SpaceGridAddress address = preferred.offset(BigInteger.ZERO, BigInteger.valueOf(step), BigInteger.ZERO);
-            ServerLevel level = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), address);
-            for (SpaceGridFrameData.Frame frame : SpaceGridFrameData.get(level).frames()) {
-                pruneFrame(new FrameLocation(level, frame), ships);
-            }
-            if (SpaceGridFrameData.get(level).hasFreeCell()) return level;
-        }
-        throw new IllegalStateException("no free physics frame cells near space grid " + preferred);
-    }
-
-    private void splitSpreadFrames(Map<UUID, ServerSubLevel> ships) {
-        for (FrameLocation location : activeFrames(ships.keySet())) {
-            FrameLocation current = location;
-            while (current != null && !current.frame().constrained() && current.frame().ships().size() > 1) {
-                Map<UUID, SpacePosition> positions = framePositions(current, ships);
-                if (positions == null || spread(positions.values()) <= FRAME_SPLIT_SPREAD) break;
-
-                UUID farthest = null;
-                double farthestDistance = -1.0;
-                for (Map.Entry<UUID, SpacePosition> entry : positions.entrySet()) {
-                    double distance = axisDistance(current.frame().origin(), entry.getValue());
-                    if (distance > farthestDistance) {
-                        farthest = entry.getKey();
-                        farthestDistance = distance;
-                    }
-                }
-                moveToOwnFrame(ships.get(farthest), current, null, null);
-                current = SpaceGridFrameData.get(current.level()).frame(current.frame().id())
-                        .map(frame -> new FrameLocation(location.level(), frame))
-                        .orElse(null);
-            }
-        }
-    }
-
-    private void moveToOwnFrame(ServerSubLevel ship, FrameLocation source,
-                                Pose3dc targetPose, SpacePosition targetPosition) {
-        PhysicsPipeline sourcePipeline = rawPipeline(source.level());
-        ShipFramePose currentPose = readShipPose(sourcePipeline, source.frame(), ship);
-        DetachedShip detached = new DetachedShip(currentPose, contraptionsFor(ship, sourcePipeline));
-        Pose3dc pose = targetPose == null ? detached.pose().pose() : targetPose;
-        SpacePosition position = targetPosition == null ? detached.pose().position() : targetPosition;
-        SpaceGridAddress projection = targetPosition == null ? source.frame().projectionGrid() : position.grid();
-        Optional<FrameLocation> existing = findFrame(position, projection, source.frame().id());
-        if (existing.isPresent()) {
-            FrameLocation target = existing.get();
-            if (source.level() == target.level()) {
-                shiftIntoFrame(ship, source, target, pose, position);
-                return;
-            }
-            transferShip(ship, source, target, pose, position, detached, Set.of(ship.getUniqueId()));
-            return;
-        }
-
-        ServerLevel allocationLevel = frameHost(position.grid(), loadedShips());
-        if (source.level() == allocationLevel) {
-            SpaceGridFrameData data = SpaceGridFrameData.get(allocationLevel);
-            SpaceGridFrameData.Frame allocated = data.allocateEmpty(position, projection);
-            FrameLocation target = new FrameLocation(allocationLevel, allocated);
-            try {
-                shiftIntoFrame(ship, source, target, pose, position);
-            } catch (RuntimeException | Error failure) {
-                data.removeEmptyFrame(allocated.id());
-                throw failure;
-            }
-            return;
-        }
-        FrameLocation target = new FrameLocation(allocationLevel,
-                SpaceGridFrameData.get(allocationLevel).allocate(position, projection, ship.getUniqueId()));
-        transferShip(ship, source, target, pose, position, detached, Set.of(ship.getUniqueId()));
-    }
-
-    private void mergeNearbyFrames(Map<UUID, ServerSubLevel> ships) {
-        boolean merged;
-        do {
-            merged = false;
-            List<FrameLocation> frames = activeFrames(ships.keySet());
-            outer:
-            for (int i = 0; i < frames.size(); i++) {
-                for (int j = i + 1; j < frames.size(); j++) {
-                    FrameLocation first = frames.get(i);
-                    FrameLocation second = frames.get(j);
-                    if (first.frame().id().equals(second.frame().id())) continue;
-                    if (!closeEnoughToMerge(first, second, ships)) continue;
-                    if (mergeFrames(first, second, ships)) {
-                        merged = true;
-                        break outer;
-                    }
-                }
-            }
-        } while (merged);
-    }
-
-    private boolean closeEnoughToMerge(FrameLocation first, FrameLocation second, Map<UUID, ServerSubLevel> ships) {
-        if (axisDistance(first.frame().origin(), second.frame().origin())
-                > FRAME_MERGE_SPREAD + SpacePhysicsFrameGrid.SPACING) return false;
-        Map<UUID, SpacePosition> firstPositions = framePositions(first, ships);
-        Map<UUID, SpacePosition> secondPositions = framePositions(second, ships);
-        if (firstPositions == null || secondPositions == null) return false;
-        List<SpacePosition> positions = new ArrayList<>(firstPositions.values());
-        positions.addAll(secondPositions.values());
-        return spread(positions) <= FRAME_MERGE_SPREAD;
-    }
-
-    private Map<UUID, SpacePosition> framePositions(FrameLocation location, Map<UUID, ServerSubLevel> ships) {
-        location = pruneFrame(location, ships);
-        if (location == null) return null;
-        PhysicsPipeline host = rawPipeline(location.level());
-        Map<UUID, SpacePosition> positions = new HashMap<>();
-        for (UUID shipId : location.frame().ships()) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null || ship.isRemoved()) return null;
-            Vector3d physical = host.readPose(ship, new Pose3d()).position();
-            positions.put(shipId, SpacePhysicsFrameGrid.toLogicalPosition(location.frame().cell(),
-                    location.frame().origin(), new SpaceVec3(physical.x, physical.y, physical.z)));
-        }
-        return positions;
-    }
-
-    private static double spread(Iterable<SpacePosition> positions) {
-        SpacePosition base = null;
-        double minX = 0.0, minY = 0.0, minZ = 0.0, maxX = 0.0, maxY = 0.0, maxZ = 0.0;
-        for (SpacePosition position : positions) {
-            if (base == null) {
-                base = position;
-                continue;
-            }
-            Optional<SpaceVec3> delta = base.deltaWithin(position, SpacePhysicsFrameGrid.SPACING * 4.0);
-            if (delta.isEmpty()) return Double.POSITIVE_INFINITY;
-            SpaceVec3 value = delta.get();
-            minX = Math.min(minX, value.x());
-            minY = Math.min(minY, value.y());
-            minZ = Math.min(minZ, value.z());
-            maxX = Math.max(maxX, value.x());
-            maxY = Math.max(maxY, value.y());
-            maxZ = Math.max(maxZ, value.z());
-        }
-        return Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ));
-    }
-
-    private static double axisDistance(SpacePosition origin, SpacePosition position) {
-        Optional<SpaceVec3> delta = origin.deltaWithin(position, SpacePhysicsFrameGrid.SPACING * 4.0);
-        if (delta.isEmpty()) return Double.POSITIVE_INFINITY;
-        SpaceVec3 value = delta.get();
-        return Math.max(Math.abs(value.x()), Math.max(Math.abs(value.y()), Math.abs(value.z())));
-    }
-
-    private List<FrameLocation> activeFrames(Set<UUID> activeShips) {
-        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
-        Map<UUID, FrameLocation> frames = new HashMap<>();
-        for (UUID shipId : activeShips) {
-            SpaceGridAddress owner = directory.frameOwnerAddress(shipId);
-            if (owner == null) continue;
-            ServerLevel level = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), owner);
-            SpaceGridFrameData.get(level).frameForShip(shipId)
-                    .ifPresent(frame -> frames.putIfAbsent(frame.id(), new FrameLocation(level, frame)));
-        }
-        return new ArrayList<>(frames.values());
-    }
-
-    private boolean mergeFrames(ServerSubLevel firstShip, ServerSubLevel secondShip) {
-        if (firstShip.isRemoved() || secondShip.isRemoved()) return false;
-        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
-        SpaceGridAddress firstOwner = directory.frameOwnerAddress(firstShip.getUniqueId());
-        SpaceGridAddress secondOwner = directory.frameOwnerAddress(secondShip.getUniqueId());
-        if (firstOwner == null || secondOwner == null) return false;
-        FrameLocation first = new FrameLocation(
-                SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), firstOwner),
-                frame(firstShip.getUniqueId(), firstOwner));
-        FrameLocation second = new FrameLocation(
-                SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), secondOwner),
-                frame(secondShip.getUniqueId(), secondOwner));
-        if (first.frame().id().equals(second.frame().id())) return true;
-        Map<UUID, ServerSubLevel> ships = new HashMap<>();
-        ships.put(firstShip.getUniqueId(), firstShip);
-        ships.put(secondShip.getUniqueId(), secondShip);
-        SubLevelContainer container = SubLevelContainer.getContainer(spaceLevel);
-        if (container != null) {
-            for (Object object : container.getAllSubLevels()) {
-                if (object instanceof ServerSubLevel ship) ships.put(ship.getUniqueId(), ship);
-            }
-        }
-        return mergeFrames(first, second, ships);
-    }
-
-    private boolean mergeFrames(FrameLocation first, FrameLocation second,
-                                Map<UUID, ServerSubLevel> ships) {
-        FrameLocation target = first;
-        FrameLocation source = second;
-        boolean sameScene = first.level() == second.level();
-        boolean keepConstraints = !sameScene && (first.frame().constrained() || second.frame().constrained());
-        if (!sameScene && first.frame().constrained() && second.frame().constrained()) return false;
-        if (second.frame().constrained() && !first.frame().constrained()) {
-            target = second;
-            source = first;
-        }
-        Optional<SpacePosition> origin = mergedOrigin(target, source, ships);
-        if (origin.isEmpty()) {
-            if (keepConstraints) return false;
-            FrameLocation swap = target;
-            target = source;
-            source = swap;
-            origin = mergedOrigin(target, source, ships);
-        }
-        if (origin.isEmpty()) return false;
-
-        if (!target.frame().origin().equals(origin.get())) {
-            target = rebaseFrame(target, origin.get(), ships);
-        }
-
-        SpaceGridFrameData targetData = SpaceGridFrameData.get(target.level());
-        Set<UUID> movingShips = new HashSet<>();
-        for (UUID shipId : source.frame().ships()) {
-            if (ships.containsKey(shipId)) movingShips.add(shipId);
-        }
-        for (UUID shipId : List.copyOf(source.frame().ships())) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null) continue;
-            if (sameScene) {
-                shiftIntoFrame(ship, source, target);
-                continue;
-            }
-            DetachedShip detached = new DetachedShip(
-                    readShipPose(rawPipeline(source.level()), source.frame(), ship),
-                    contraptionsFor(ship, rawPipeline(source.level())));
-            transferShip(ship, source, target, detached.pose().pose(), detached.pose().position(),
-                    detached, movingShips);
-        }
-        if (source.frame().constrained()) targetData.markConstrained(target.frame().id());
-        FrameLocation merged = new FrameLocation(target.level(),
-                targetData.frame(target.frame().id()).orElse(target.frame()));
-        if (sameScene) reanchorWorldConstraints(merged);
-        moveRopes(source.frame().id(), merged);
-        return true;
-    }
-
-    private void shiftIntoFrame(ServerSubLevel ship, FrameLocation source, FrameLocation target) {
-        ShipFramePose pose = readShipPose(rawPipeline(source.level()), source.frame(), ship);
-        shiftIntoFrame(ship, source, target, pose.pose(), pose.position());
-    }
-
-    private void shiftIntoFrame(ServerSubLevel ship, FrameLocation source, FrameLocation target,
-                                Pose3dc targetPose, SpacePosition targetPosition) {
-        PhysicsPipeline scene = rawPipeline(target.level());
-        ShipFramePose previous = readShipPose(scene, source.frame(), ship);
-        Pose3d previousPhysical = scene.readPose(ship, new Pose3d());
-        SpaceGridFrameData data = SpaceGridFrameData.get(target.level());
-        SpaceVec3 physical = SpacePhysicsFrameGrid.toPhysicsPosition(
-                target.frame().cell(), target.frame().origin(), targetPosition).orElseThrow();
-        try {
-            scene.teleport(ship, vector(physical), targetPose.orientation());
-            Vector3d projected = projectionPosition(target.frame(), targetPosition);
-            carryAcrossProjection(ship, target.frame(), projected);
-            ship.logicalPose().position().set(projected);
-            ship.logicalPose().orientation().set(targetPose.orientation());
-            storePose(ship, SpaceGridDirectory.get(spaceLevel).shipAddress(ship.getUniqueId()),
-                    targetPosition, new Quaterniond(targetPose.orientation()));
-            data.moveShip(ship.getUniqueId(), target.frame().id());
-        } catch (RuntimeException | Error failure) {
-            try {
-                scene.teleport(ship, previousPhysical.position(), previousPhysical.orientation());
-                Vector3d sourceProjection = projectionPosition(source.frame(), previous.position());
-                carryAcrossProjection(ship, source.frame(), sourceProjection);
-                ship.logicalPose().position().set(sourceProjection);
-                ship.logicalPose().orientation().set(previous.pose().orientation());
-                storePose(ship, SpaceGridDirectory.get(spaceLevel).shipAddress(ship.getUniqueId()),
-                        previous.position(), new Quaterniond(previous.pose().orientation()));
-            } catch (RuntimeException | Error rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-            }
-            try {
-                UUID currentFrame = data.frameForShip(ship.getUniqueId()).map(SpaceGridFrameData.Frame::id)
-                        .orElse(null);
-                if (!source.frame().id().equals(currentFrame)) {
-                    data.removeShip(ship.getUniqueId());
-                    data.restoreMembership(source.frame(), ship.getUniqueId());
-                }
-            } catch (RuntimeException | Error rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-            }
-            throw failure;
-        }
-    }
-
-    private void transferShip(ServerSubLevel ship, FrameLocation source, FrameLocation target,
-                              Pose3dc pose, SpacePosition position, DetachedShip detached,
-                              Set<UUID> movingShips) {
-        PhysicsPipeline sourcePipeline = rawPipeline(source.level());
-        PhysicsPipeline targetPipeline = rawPipeline(target.level());
-        SpaceGridFrameData targetData = SpaceGridFrameData.get(target.level());
-        List<SectionTransfer> sections = List.of();
-        List<KinematicContraption> addedContraptions = new ArrayList<>();
-        boolean shipAdded = true;
-        boolean membershipAdded = targetData.frameForShip(ship.getUniqueId())
-                .map(frame -> frame.id().equals(target.frame().id())).orElse(false);
-        try {
-            targetPipeline.add(ship, physicsPose(target.frame(), pose, position));
-            sections = addSectionsTo(targetPipeline, ship);
-            for (KinematicContraption contraption : detached.contraptions()) {
-                addedContraptions.add(contraption);
-                targetPipeline.add(contraption);
-            }
-            targetPipeline.addLinearAndAngularVelocity(ship,
-                    detached.pose().linearVelocity(), detached.pose().angularVelocity());
-
-            if (!membershipAdded) {
-                membershipAdded = true;
-                targetData.addShip(target.frame().id(), ship.getUniqueId());
-            }
-        } catch (RuntimeException | Error failure) {
-            rollbackTargetTransfer(targetPipeline, ship, addedContraptions, sections,
-                    targetData, membershipAdded, shipAdded, failure);
-            throw failure;
-        }
-
-        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
-        SpaceGridFrameData sourceData = SpaceGridFrameData.get(source.level());
-        List<KinematicContraption> removedContraptions = new ArrayList<>();
-        boolean sectionsMoved = false;
-        boolean shipRemoved = false;
-        boolean membershipRemoved = false;
-        boolean ownerChanged = false;
-        boolean projectionChanged = false;
-        try {
-            finishSectionTransfer(sections, targetPipeline);
-            sectionsMoved = true;
-            for (KinematicContraption contraption : detached.contraptions()) {
-                sourcePipeline.remove(contraption);
-                removedContraptions.add(contraption);
-            }
-            shipRemoved = true;
-            sourcePipeline.remove(ship);
-            membershipRemoved = true;
-            sourceData.removeShip(ship.getUniqueId());
-            ownerChanged = true;
-            directory.setFrameOwnerAddress(ship.getUniqueId(),
-                    SpaceGridLevelFactory.addressOf(spaceLevel.getServer(), target.level().dimension()));
-            projectionChanged = true;
-            setLogicalPosition(ship, target.frame(), position);
-            ship.logicalPose().orientation().set(pose.orientation());
-            storePose(ship, directory.shipAddress(ship.getUniqueId()), position,
-                    new Quaterniond(pose.orientation()));
-        } catch (RuntimeException | Error failure) {
-            rollbackTargetTransfer(targetPipeline, ship, addedContraptions, sections,
-                    targetData, membershipAdded, shipAdded, failure);
-            if (ownerChanged) {
-                directory.setFrameOwnerAddress(ship.getUniqueId(),
-                        SpaceGridLevelFactory.addressOf(spaceLevel.getServer(), source.level().dimension()));
-            }
-            if (membershipRemoved) {
-                try {
-                    sourceData.restoreMembership(source.frame(), ship.getUniqueId());
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            if (sectionsMoved) restoreSectionTransfer(sections, failure);
-            if (shipRemoved) {
-                try {
-                    sourcePipeline.add(ship, physicsPose(source.frame(), detached.pose().pose(),
-                            detached.pose().position()));
-                    sourcePipeline.addLinearAndAngularVelocity(ship, detached.pose().linearVelocity(),
-                            detached.pose().angularVelocity());
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            for (int i = removedContraptions.size() - 1; i >= 0; i--) {
-                KinematicContraption contraption = removedContraptions.get(i);
-                try {
-                    sourcePipeline.add(contraption);
-                    contraptionOwners.put(contraption, sourcePipeline);
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            if (projectionChanged) {
-                try {
-                    Vector3d sourceProjection = projectionPosition(source.frame(), detached.pose().position());
-                    carryAcrossProjection(ship, source.frame(), sourceProjection);
-                    ship.logicalPose().position().set(sourceProjection);
-                    ship.logicalPose().orientation().set(detached.pose().pose().orientation());
-                    storePose(ship, directory.shipAddress(ship.getUniqueId()), detached.pose().position(),
-                            new Quaterniond(detached.pose().pose().orientation()));
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            throw failure;
-        }
-
-        for (KinematicContraption contraption : detached.contraptions()) {
-            contraptionOwners.put(contraption, targetPipeline);
-        }
-        migrateConstraints(ship, target, movingShips);
-    }
-
-    private void migrateConstraints(ServerSubLevel ship, FrameLocation target, Set<UUID> movingShips) {
-        boolean constrained = false;
-        for (WorldConstraint constraint : List.copyOf(worldConstraints)) {
-            if (constraint.ship != ship) continue;
-            try {
-                constraint.moveTo(rawPipeline(target.level()), target.level());
-                constrained |= constraint.isLive();
-            } catch (RuntimeException | Error failure) {
-                constraint.retire();
-                Astronautics.LOGGER.warn("Could not move a world constraint with ship {}", ship.getUniqueId(), failure);
-            }
-        }
-
-        SpaceGridAddress targetAddress = SpaceGridLevelFactory.addressOf(
-                spaceLevel.getServer(), target.level().dimension());
-        SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
-        for (Map.Entry<ShipConstraint, Set<UUID>> entry : List.copyOf(shipConstraints.entrySet())) {
-            Set<UUID> ids = entry.getValue();
-            if (ids.stream().noneMatch(movingShips::contains)) continue;
-            boolean pending = movingShips.stream().anyMatch(id -> !isShipOwnedBy(directory, id, targetAddress));
-            if (pending) continue;
-
-            ShipConstraint constraint = entry.getKey();
-            if (ids.stream().allMatch(id -> isShipOwnedBy(directory, id, targetAddress))) {
-                try {
-                    constraint.moveTo(rawPipeline(target.level()), target.level());
-                    constrained |= constraint.isLive();
-                } catch (RuntimeException | Error failure) {
-                    constraint.retire();
-                    Astronautics.LOGGER.warn("Could not move a ship constraint into physics frame {}",
-                            target.frame().id(), failure);
-                }
-            } else {
-                constraint.retire();
-            }
-        }
-        if (constrained) SpaceGridFrameData.get(target.level()).markConstrained(target.frame().id());
-    }
-
-    private static boolean isShipOwnedBy(SpaceGridDirectory directory, UUID shipId, SpaceGridAddress address) {
-        return address.equals(directory.frameOwnerAddress(shipId));
-    }
-
-    private static void rollbackTargetTransfer(PhysicsPipeline targetPipeline, ServerSubLevel ship,
-                                               List<KinematicContraption> addedContraptions,
-                                               List<SectionTransfer> sections, SpaceGridFrameData targetData,
-                                               boolean membershipAdded, boolean shipAdded, Throwable failure) {
-        for (int i = addedContraptions.size() - 1; i >= 0; i--) {
-            try {
-                targetPipeline.remove(addedContraptions.get(i));
-            } catch (RuntimeException | Error rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-            }
-        }
-        rollbackSections(targetPipeline, sections, failure);
-        if (shipAdded) {
-            try {
-                targetPipeline.remove(ship);
-            } catch (RuntimeException | Error rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-            }
-        }
-        if (membershipAdded) {
-            try {
-                targetData.removeShip(ship.getUniqueId());
-            } catch (RuntimeException | Error rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-            }
-        }
-    }
-
-    private record DetachedShip(ShipFramePose pose, List<KinematicContraption> contraptions) {}
-    private record SectionTransfer(long key, int x, int y, int z, PhysicsPipeline previous,
-                                  LevelChunkSection section) {}
-
-    private Optional<SpacePosition> mergedOrigin(FrameLocation target, FrameLocation source,
-                                                  Map<UUID, ServerSubLevel> ships) {
-        List<SpacePosition> positions = new ArrayList<>();
-        PhysicsPipeline targetPipeline = rawPipeline(target.level());
-        PhysicsPipeline sourcePipeline = rawPipeline(source.level());
-        for (UUID shipId : target.frame().ships()) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null || ship.isRemoved()) return Optional.empty();
-            positions.add(readShipPose(targetPipeline, target.frame(), ship).position());
-        }
-        for (UUID shipId : source.frame().ships()) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null || ship.isRemoved()) return Optional.empty();
-            positions.add(readShipPose(sourcePipeline, source.frame(), ship).position());
-        }
-        Optional<SpacePosition> center = center(positions);
-        if (center.isEmpty()) return Optional.empty();
-        for (SpacePosition position : positions) {
-            if (SpacePhysicsFrameGrid.toPhysicsPosition(target.frame().cell(), center.get(), position).isEmpty()) {
-                return Optional.empty();
-            }
-        }
-        return center;
-    }
-
-    private Optional<SpacePosition> center(List<SpacePosition> positions) {
-        if (positions.isEmpty()) return Optional.empty();
-        SpacePosition base = positions.getFirst();
-        double minX = 0.0;
-        double minY = 0.0;
-        double minZ = 0.0;
-        double maxX = 0.0;
-        double maxY = 0.0;
-        double maxZ = 0.0;
-        double range = SpacePhysicsFrameGrid.SPACING * 2.0;
-        for (int i = 1; i < positions.size(); i++) {
-            Optional<SpaceVec3> delta = base.deltaWithin(positions.get(i), range);
-            if (delta.isEmpty()) return Optional.empty();
-            SpaceVec3 value = delta.get();
-            minX = Math.min(minX, value.x());
-            minY = Math.min(minY, value.y());
-            minZ = Math.min(minZ, value.z());
-            maxX = Math.max(maxX, value.x());
-            maxY = Math.max(maxY, value.y());
-            maxZ = Math.max(maxZ, value.z());
-        }
-        return Optional.of(base.add(new SpaceVec3(
-                (minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)));
-    }
-
-    private FrameLocation rebaseFrame(FrameLocation location, SpacePosition origin,
-                                      Map<UUID, ServerSubLevel> ships) {
-        return rebaseFrame(location, origin, ships, Map.of());
-    }
-
-    private FrameLocation rebaseFrame(FrameLocation location, SpacePosition origin,
-                                      Map<UUID, ServerSubLevel> ships, Map<UUID, SpacePosition> targets) {
-        PhysicsPipeline pipeline = rawPipeline(location.level());
-        Map<UUID, ShipFramePose> poses = new HashMap<>();
-        Map<UUID, ShipFramePose> previousPoses = new HashMap<>();
-        Map<UUID, Pose3d> physicalPoses = new HashMap<>();
-        SpaceGridFrameData data = SpaceGridFrameData.get(location.level());
-        for (UUID shipId : location.frame().ships()) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null || ship.isRemoved()) return location;
-            ShipFramePose pose = readShipPose(pipeline, location.frame(), ship);
-            previousPoses.put(shipId, pose);
-            physicalPoses.put(shipId, pipeline.readPose(ship, new Pose3d()));
-            SpacePosition target = targets.get(shipId);
-            poses.put(shipId, target == null ? pose
-                    : new ShipFramePose(target, pose.pose(), pose.linearVelocity(), pose.angularVelocity()));
-        }
-        Map<UUID, SpaceVec3> translatedPositions = new HashMap<>();
-        for (Map.Entry<UUID, ShipFramePose> entry : poses.entrySet()) {
-            Optional<SpaceVec3> translated = SpacePhysicsFrameGrid.toPhysicsPosition(
-                    location.frame().cell(), origin, entry.getValue().position());
-            if (translated.isEmpty()) return location;
-            translatedPositions.put(entry.getKey(), translated.get());
-        }
-
-        List<UUID> teleported = new ArrayList<>();
-        boolean originChanged = false;
-        try {
-            for (Map.Entry<UUID, ShipFramePose> entry : poses.entrySet()) {
-                teleported.add(entry.getKey());
-                pipeline.teleport(ships.get(entry.getKey()), vector(translatedPositions.get(entry.getKey())),
-                        entry.getValue().pose().orientation());
-            }
-
-            SpaceGridFrameData.Frame updated = data.setOrigin(location.frame().id(), origin);
-            originChanged = true;
-            for (Map.Entry<UUID, ShipFramePose> entry : poses.entrySet()) {
-                ServerSubLevel ship = ships.get(entry.getKey());
-                ShipFramePose pose = entry.getValue();
-                ship.logicalPose().position().set(projectionPosition(updated, pose.position()));
-                ship.logicalPose().orientation().set(pose.pose().orientation());
-                storePose(ship, SpaceGridDirectory.get(spaceLevel).shipAddress(ship.getUniqueId()),
-                        pose.position(), new Quaterniond(pose.pose().orientation()));
-            }
-        } catch (RuntimeException | Error failure) {
-            if (originChanged) {
-                try {
-                    data.setOrigin(location.frame().id(), location.frame().origin());
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            for (int i = teleported.size() - 1; i >= 0; i--) {
-                UUID shipId = teleported.get(i);
-                try {
-                    Pose3d previous = physicalPoses.get(shipId);
-                    pipeline.teleport(ships.get(shipId), previous.position(), previous.orientation());
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            for (Map.Entry<UUID, ShipFramePose> entry : poses.entrySet()) {
-                UUID shipId = entry.getKey();
-                ServerSubLevel ship = ships.get(shipId);
-                ShipFramePose previous = previousPoses.get(shipId);
-                ship.logicalPose().position().set(projectionPosition(location.frame(), previous.position()));
-                ship.logicalPose().orientation().set(previous.pose().orientation());
-                try {
-                    storePose(ship, SpaceGridDirectory.get(spaceLevel).shipAddress(shipId),
-                            previous.position(), new Quaterniond(previous.pose().orientation()));
-                } catch (RuntimeException | Error rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
-                }
-            }
-            throw failure;
-        }
-
-        SpaceGridFrameData.Frame updated = data.frame(location.frame().id()).orElseThrow();
-        FrameLocation rebased = new FrameLocation(location.level(), updated);
-        moveRopes(location.frame().id(), rebased);
-        reanchorWorldConstraints(rebased);
-        return rebased;
-    }
-
-    private ShipFramePose readShipPose(PhysicsPipeline pipeline, SpaceGridFrameData.Frame frame,
-                                       ServerSubLevel ship) {
-        Pose3d physical = pipeline.readPose(ship, new Pose3d());
-        SpacePosition position = SpacePhysicsFrameGrid.toLogicalPosition(frame.cell(), frame.origin(),
-                new SpaceVec3(physical.position().x, physical.position().y, physical.position().z));
-        Pose3d logical = new Pose3d(new Vector3d(position.x(), position.y(), position.z()),
-                new Quaterniond(physical.orientation()), new Vector3d(ship.logicalPose().rotationPoint()),
-                new Vector3d(ship.logicalPose().scale()));
-        logical.position().set(projectionPosition(frame, position));
-        return new ShipFramePose(position, logical,
-                pipeline.getLinearVelocity(ship, new Vector3d()),
-                pipeline.getAngularVelocity(ship, new Vector3d()));
-    }
-
-    private record ShipFramePose(SpacePosition position, Pose3d pose,
-                                 Vector3d linearVelocity, Vector3d angularVelocity) {}
-
-    private boolean needsReframe(SpaceGridFrameData.Frame frame, SpacePosition position) {
-        Optional<SpaceVec3> relative = frame.origin().deltaWithin(position,
-                Math.sqrt(3.0) * SpacePhysicsFrameGrid.SPACING * 0.5);
-        if (relative.isEmpty()) return true;
-        SpaceVec3 delta = relative.get();
-        return Math.abs(delta.x()) > FRAME_REBASE_DISTANCE
-                || Math.abs(delta.y()) > FRAME_REBASE_DISTANCE
-                || Math.abs(delta.z()) > FRAME_REBASE_DISTANCE;
-    }
-
-    private void rebaseFrame(SpaceGridAddress frameOwner, SpaceGridFrameData.Frame frame) {
-        Map<UUID, ServerSubLevel> ships = loadedShips();
-        FrameLocation location = pruneFrame(new FrameLocation(
-                SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner), frame), ships);
-        if (location == null) return;
-        Map<UUID, SpacePosition> positions = framePositions(location, ships);
-        if (positions == null) return;
-        center(List.copyOf(positions.values())).ifPresent(origin -> rebaseFrame(location, origin, ships));
-    }
-
-    private boolean rebaseForTeleport(ServerSubLevel teleportedShip, SpaceGridAddress frameOwner,
-                                   SpaceGridFrameData.Frame frame, SpacePosition targetPosition) {
-        Map<UUID, ServerSubLevel> ships = loadedShips();
-        ServerLevel level = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner);
-        FrameLocation location = pruneFrame(new FrameLocation(level, frame), ships);
-        if (location == null) throw new IllegalStateException("teleported ship lost its physics frame");
-        frame = location.frame();
-        PhysicsPipeline host = rawPipeline(level);
-        List<SpacePosition> positions = new ArrayList<>();
-        for (UUID shipId : frame.ships()) {
-            ServerSubLevel ship = ships.get(shipId);
-            if (ship == null || ship.isRemoved()) return false;
-            positions.add(shipId.equals(teleportedShip.getUniqueId())
-                    ? targetPosition
-                    : readShipPose(host, frame, ship).position());
-        }
-        SpacePosition origin = center(positions).orElse(null);
-        boolean fits = origin != null;
-        for (SpacePosition position : positions) {
-            if (!fits) break;
-            fits = SpacePhysicsFrameGrid.toPhysicsPosition(frame.cell(), origin, position).isPresent();
-        }
-        if (!fits) {
-            Astronautics.LOGGER.warn("Ship {} was teleported too far from its connected ships, moving it to its own physics frame",
-                    teleportedShip.getUniqueId());
-            return false;
-        }
-        rebaseFrame(location, origin, ships, Map.of(teleportedShip.getUniqueId(), targetPosition));
-        return true;
-    }
-
-    private void storePose(ServerSubLevel ship, SpaceGridAddress previousOwner,
+    void storePose(ServerSubLevel ship, SpaceGridAddress previousOwner,
                            SpacePosition position, Quaterniond orientation) {
         SpaceGridDirectory directory = SpaceGridDirectory.get(spaceLevel);
         SpaceGridAddress nextOwner = position.grid();
@@ -1431,13 +762,13 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         SpaceGridShipData.get(stateLevel).put(ship.getUniqueId(), state);
     }
 
-    private SpaceGridFrameData.Frame frame(UUID shipId, SpaceGridAddress frameOwner) {
+    SpaceGridFrameData.Frame frame(UUID shipId, SpaceGridAddress frameOwner) {
         ServerLevel level = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner);
         return SpaceGridFrameData.get(level).frameForShip(shipId)
                 .orElseThrow(() -> new IllegalStateException("ship has no persisted physics frame: " + shipId));
     }
 
-    private PhysicsPipeline hostPipeline(ServerSubLevel ship) {
+    PhysicsPipeline hostPipeline(ServerSubLevel ship) {
         SpaceGridAddress owner = SpaceGridDirectory.get(spaceLevel).frameOwnerAddress(ship.getUniqueId());
         if (owner == null) return null;
         ServerLevel level = SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), owner);
@@ -1445,7 +776,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         return wrapped instanceof SpaceGridHostPipeline host ? host.astronautics$rawPipeline() : wrapped;
     }
 
-    private PhysicsPipeline rawPipeline(ServerLevel level) {
+    PhysicsPipeline rawPipeline(ServerLevel level) {
         PhysicsPipeline wrapped = SubLevelPhysicsSystem.require(level).getPipeline();
         return wrapped instanceof SpaceGridHostPipeline host ? host.astronautics$rawPipeline() : wrapped;
     }
@@ -1481,8 +812,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         if (container == null || !container.inBounds(x, z)) pipeline.handleChunkSectionRemoval(x, y, z);
     }
 
-    private List<SectionTransfer> addSectionsTo(PhysicsPipeline target, ServerSubLevel ship) {
-        List<SectionTransfer> transfers = new ArrayList<>();
+    List<SpaceGridFrameTransitions.SectionTransfer> addSectionsTo(PhysicsPipeline target, ServerSubLevel ship) {
+        List<SpaceGridFrameTransitions.SectionTransfer> transfers = new ArrayList<>();
         try {
             for (PlotChunkHolder holder : ship.getPlot().getLoadedChunks()) {
                 LevelChunk chunk = holder.getChunk();
@@ -1493,7 +824,8 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                     long key = SectionPos.asLong(pos.x, sectionY, pos.z);
                     PhysicsPipeline previous = sectionOwners.get(key);
                     if (previous == target || previous == null && sections[index].hasOnlyAir()) continue;
-                    transfers.add(new SectionTransfer(key, pos.x, sectionY, pos.z, previous, sections[index]));
+                    transfers.add(new SpaceGridFrameTransitions.SectionTransfer(
+                            key, pos.x, sectionY, pos.z, previous, sections[index]));
                     target.handleChunkSectionAddition(sections[index], pos.x, sectionY, pos.z, true);
                 }
             }
@@ -1504,10 +836,11 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         return transfers;
     }
 
-    private static void rollbackSections(PhysicsPipeline target, List<SectionTransfer> transfers,
-                                         Throwable failure) {
+    static void rollbackSections(PhysicsPipeline target,
+                                 List<SpaceGridFrameTransitions.SectionTransfer> transfers,
+                                 Throwable failure) {
         for (int i = transfers.size() - 1; i >= 0; i--) {
-            SectionTransfer transfer = transfers.get(i);
+            SpaceGridFrameTransitions.SectionTransfer transfer = transfers.get(i);
             try {
                 target.handleChunkSectionRemoval(transfer.x(), transfer.y(), transfer.z());
             } catch (RuntimeException | Error rollbackFailure) {
@@ -1516,21 +849,22 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
     }
 
-    private void finishSectionTransfer(List<SectionTransfer> transfers, PhysicsPipeline target) {
-        List<SectionTransfer> removed = new ArrayList<>();
+    void finishSectionTransfer(List<SpaceGridFrameTransitions.SectionTransfer> transfers,
+                               PhysicsPipeline target) {
+        List<SpaceGridFrameTransitions.SectionTransfer> removed = new ArrayList<>();
         try {
-            for (SectionTransfer transfer : transfers) {
+            for (SpaceGridFrameTransitions.SectionTransfer transfer : transfers) {
                 if (transfer.previous() != null) {
                     removed.add(transfer);
                     transfer.previous().handleChunkSectionRemoval(transfer.x(), transfer.y(), transfer.z());
                 }
             }
-            for (SectionTransfer transfer : transfers) {
+            for (SpaceGridFrameTransitions.SectionTransfer transfer : transfers) {
                 sectionOwners.put(transfer.key(), target);
             }
         } catch (RuntimeException | Error failure) {
             restoreRemovedSections(removed, failure);
-            for (SectionTransfer transfer : transfers) {
+            for (SpaceGridFrameTransitions.SectionTransfer transfer : transfers) {
                 if (transfer.previous() == null) sectionOwners.remove(transfer.key());
                 else sectionOwners.put(transfer.key(), transfer.previous());
             }
@@ -1538,9 +872,9 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
     }
 
-    private void restoreSectionTransfer(List<SectionTransfer> transfers, Throwable failure) {
+    void restoreSectionTransfer(List<SpaceGridFrameTransitions.SectionTransfer> transfers, Throwable failure) {
         for (int i = transfers.size() - 1; i >= 0; i--) {
-            SectionTransfer transfer = transfers.get(i);
+            SpaceGridFrameTransitions.SectionTransfer transfer = transfers.get(i);
             if (transfer.previous() == null) {
                 sectionOwners.remove(transfer.key());
                 continue;
@@ -1555,9 +889,10 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
     }
 
-    private static void restoreRemovedSections(List<SectionTransfer> transfers, Throwable failure) {
+    private static void restoreRemovedSections(List<SpaceGridFrameTransitions.SectionTransfer> transfers,
+                                               Throwable failure) {
         for (int i = transfers.size() - 1; i >= 0; i--) {
-            SectionTransfer transfer = transfers.get(i);
+            SpaceGridFrameTransitions.SectionTransfer transfer = transfers.get(i);
             try {
                 transfer.previous().handleChunkSectionAddition(transfer.section(), transfer.x(),
                         transfer.y(), transfer.z(), true);
@@ -1581,6 +916,84 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
     }
 
+    private void releaseShipReferences(ServerSubLevel ship) {
+        UUID shipId = ship.getUniqueId();
+        teleportedShips.remove(shipId);
+        Throwable failure = null;
+        for (ShipConstraint constraint : List.copyOf(shipConstraints.keySet())) {
+            if (constraint.bodyA != ship && constraint.bodyB != ship) continue;
+            try {
+                constraint.retire();
+            } catch (RuntimeException | Error exception) {
+                failure = appendFailure(failure, exception);
+            }
+        }
+        for (WorldConstraint constraint : List.copyOf(worldConstraints)) {
+            if (constraint.ship != ship) continue;
+            try {
+                constraint.retire();
+            } catch (RuntimeException | Error exception) {
+                failure = appendFailure(failure, exception);
+            }
+        }
+        for (GridRope rope : List.copyOf(ropes)) {
+            if (!rope.attachesTo(ship)) continue;
+            try {
+                rope.remove();
+            } catch (RuntimeException | Error exception) {
+                failure = appendFailure(failure, exception);
+            }
+        }
+        rethrowUnchecked(failure);
+    }
+
+    private void cleanupRemovedShip(ServerSubLevel ship, UUID shipId, SpaceGridAddress frameOwner,
+                                    boolean removeFrameMembership) {
+        Throwable failure = null;
+        try {
+            releaseSections(ship);
+        } catch (RuntimeException | Error exception) {
+            failure = appendFailure(failure, exception);
+        }
+        try {
+            releaseShipReferences(ship);
+        } catch (RuntimeException | Error exception) {
+            failure = appendFailure(failure, exception);
+        }
+        if (removeFrameMembership) {
+            try {
+                frames.dropMembership(SpaceGridLevelFactory.getOrCreate(spaceLevel.getServer(), frameOwner), shipId);
+            } catch (RuntimeException | Error exception) {
+                failure = appendFailure(failure, exception);
+            }
+        }
+        rethrowUnchecked(failure);
+    }
+
+    private static Throwable appendFailure(Throwable previous, Throwable next) {
+        if (previous == null) return next;
+        previous.addSuppressed(next);
+        return previous;
+    }
+
+    private static void rethrowUnchecked(Throwable failure) {
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        if (failure instanceof Error error) throw error;
+    }
+
+    private void restoreContraptions(PhysicsPipeline host, List<KinematicContraption> removed,
+                                    Throwable failure) {
+        for (int i = removed.size() - 1; i >= 0; i--) {
+            KinematicContraption contraption = removed.get(i);
+            try {
+                host.add(contraption);
+                contraptionOwners.put(contraption, host);
+            } catch (RuntimeException | Error rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+        }
+    }
+
     private PhysicsPipeline contraptionPipeline(KinematicContraption contraption) {
         if (Sable.HELPER.getContaining(spaceLevel, contraption.sable$getPosition()) instanceof ServerSubLevel ship) {
             PhysicsPipeline host = hostPipeline(ship);
@@ -1589,7 +1002,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         return pipeline;
     }
 
-    private List<KinematicContraption> contraptionsFor(ServerSubLevel ship, PhysicsPipeline source) {
+    List<KinematicContraption> contraptionsFor(ServerSubLevel ship, PhysicsPipeline source) {
         List<KinematicContraption> attached = new ArrayList<>();
         for (Map.Entry<KinematicContraption, PhysicsPipeline> entry : contraptionOwners.entrySet()) {
             if (entry.getValue() == source
@@ -1598,13 +1011,6 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             }
         }
         return attached;
-    }
-
-    private static Pose3d physicsPose(SpaceGridFrameData.Frame frame, Pose3dc logical, SpacePosition position) {
-        SpaceVec3 translated = SpacePhysicsFrameGrid.toPhysicsPosition(frame.cell(), frame.origin(), position)
-                .orElseThrow(() -> new IllegalStateException("ship position lies outside its physics frame"));
-        return new Pose3d(vector(translated), new Quaterniond(logical.orientation()),
-                new Vector3d(logical.rotationPoint()), new Vector3d(logical.scale()));
     }
 
     private static Pose3d pose(SpaceGridShipState state, org.joml.Vector3dc scale) {
@@ -1623,31 +1029,12 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 linear.x, linear.y, linear.z, angular.x, angular.y, angular.z);
     }
 
-    private static Vector3d vector(SpaceVec3 vector) {
-        return new Vector3d(vector.x(), vector.y(), vector.z());
-    }
-
-    private static Vector3d projectionPosition(SpaceGridFrameData.Frame frame, SpacePosition position) {
-        BigInteger x = position.grid().x().subtract(frame.projectionGrid().x());
-        BigInteger y = position.grid().y().subtract(frame.projectionGrid().y());
-        BigInteger z = position.grid().z().subtract(frame.projectionGrid().z());
-        if (x.bitLength() > 52 || y.bitLength() > 52 || z.bitLength() > 52) {
-            throw new IllegalStateException("ship assembly lies outside its local space grid range");
-        }
-        return new Vector3d(
-                x.doubleValue() * SpacePosition.GRID_SIZE + position.x(),
-                y.doubleValue() * SpacePosition.GRID_SIZE + position.y(),
-                z.doubleValue() * SpacePosition.GRID_SIZE + position.z());
-    }
-
-    private record FrameLocation(ServerLevel level, SpaceGridFrameData.Frame frame) {}
-
     private RopeHandle createRope(RopePhysicsObject rope) {
         Vector3d first = rope.getPoints().getFirst();
         SpaceGridAddress grid = creationGrid(first);
         SpacePosition start = SpacePosition.normalize(grid, first.x, first.y, first.z);
         FrameLocation frame = null;
-        for (FrameLocation candidate : activeFrames(loadedShips().keySet())) {
+        for (FrameLocation candidate : frames.activeFrames(frames.loadedShips().keySet())) {
             if (SpacePhysicsFrameGrid.toPhysicsPosition(candidate.frame().cell(), candidate.frame().origin(), start)
                     .isPresent()) {
                 frame = candidate;
@@ -1656,10 +1043,11 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
         GridRope handle = new GridRope(rope.getCollisionRadius(), grid, frame);
         handle.build(rope.getPoints());
+        ropes.add(handle);
         return handle;
     }
 
-    private void moveRopes(UUID frameId, FrameLocation target) {
+    void moveRopes(UUID frameId, FrameLocation target) {
         List<GridRope> ropes = framedRopes.remove(frameId);
         if (ropes == null) return;
         for (GridRope rope : ropes) rope.relocate(target);
@@ -1760,9 +1148,12 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
 
         private void retire() {
             if (!active) return;
-            if (isConstraintSceneLoaded(ownerLevel) && inner.isValid()) inner.remove();
-            active = false;
-            shipConstraints.remove(this);
+            try {
+                if (isConstraintSceneLoaded(ownerLevel) && inner.isValid()) inner.remove();
+            } finally {
+                active = false;
+                shipConstraints.remove(this);
+            }
         }
 
         @Override
@@ -1830,27 +1221,34 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             this.anchor = worldPosition(ship, worldAnchor(config, worldFirst));
         }
 
-        private void build(PhysicsPipeline host, ServerLevel level) {
+        private boolean build(PhysicsPipeline host, ServerLevel level) {
             PhysicsConstraintHandle created = createNative(host);
+            if (created == null || !created.isValid()) {
+                active = false;
+                return false;
+            }
             for (Setting setting : settings.values()) applyTo(created, setting.method(), setting.args());
             inner = created;
             ownerLevel = level;
             if (handle == null) handle = createHandle();
+            return true;
         }
 
         private boolean isLive() {
             if (!active) return false;
-            if (!isConstraintSceneLoaded(ownerLevel)) {
+            if (inner == null || !isConstraintSceneLoaded(ownerLevel) || !inner.isValid()) {
                 active = false;
                 return false;
             }
-            if (inner.isValid()) return true;
-            active = false;
-            return false;
+            return true;
         }
 
         private void moveTo(PhysicsPipeline host, ServerLevel level) {
             if (!active) return;
+            if (!isLive()) {
+                worldConstraints.remove(this);
+                return;
+            }
             if (level == ownerLevel) {
                 rebuild(host, level);
                 return;
@@ -1862,6 +1260,10 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             PhysicsConstraintHandle previous = inner;
             ServerLevel previousLevel = ownerLevel;
             PhysicsConstraintHandle replacement = createNative(host);
+            if (replacement == null || !replacement.isValid()) {
+                retire();
+                return;
+            }
             try {
                 for (Setting setting : settings.values()) applyTo(replacement, setting.method(), setting.args());
                 if (isConstraintSceneLoaded(previousLevel) && previous.isValid()) previous.remove();
@@ -1874,9 +1276,16 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         }
 
         private void rebuild(PhysicsPipeline host, ServerLevel level) {
-            if (!isLive()) return;
+            if (!isLive()) {
+                worldConstraints.remove(this);
+                return;
+            }
             PhysicsConstraintHandle previous = inner;
             PhysicsConstraintHandle replacement = createNative(host);
+            if (replacement == null || !replacement.isValid()) {
+                retire();
+                return;
+            }
             try {
                 for (Setting setting : settings.values()) applyTo(replacement, setting.method(), setting.args());
                 if (previous.isValid()) previous.remove();
@@ -1898,9 +1307,13 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
 
         private void retire() {
             if (!active) return;
-            worldConstraints.remove(this);
-            if (isConstraintSceneLoaded(ownerLevel) && inner.isValid()) inner.remove();
-            active = false;
+            try {
+                if (inner != null && isConstraintSceneLoaded(ownerLevel) && inner.isValid()) inner.remove();
+            } finally {
+                active = false;
+                inner = null;
+                worldConstraints.remove(this);
+            }
         }
 
         private PhysicsConstraintHandle createHandle() {
@@ -1989,6 +1402,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
         private FrameLocation frame;
         private RopeHandle inner;
         private double firstSegmentLength = -1.0;
+        private boolean removed;
 
         private GridRope(double radius, SpaceGridAddress grid, FrameLocation frame) {
             this.radius = radius;
@@ -2034,6 +1448,10 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
             if (ropes != null) ropes.remove(this);
         }
 
+        private boolean attachesTo(ServerSubLevel ship) {
+            return attachments.values().stream().anyMatch(attachment -> attachment.subLevel() == ship);
+        }
+
         private void refreshPoints() {
             List<Vector3d> physical = new ArrayList<>(points.size());
             for (int i = 0; i < points.size(); i++) physical.add(new Vector3d());
@@ -2043,21 +1461,12 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
 
         private Vector3d toScene(Vector3dc logical) {
             if (frame == null) return new Vector3d(logical);
-            SpacePosition position = SpacePosition.normalize(grid, logical.x(), logical.y(), logical.z());
-            SpaceVec3 offset = frame.frame().origin().deltaWithin(position, ROPE_RANGE).orElseThrow();
-            SpacePhysicsFrameGrid.Cell cell = frame.frame().cell();
-            return new Vector3d(SpacePhysicsFrameGrid.centerX(cell) + offset.x(),
-                    SpacePhysicsFrameGrid.centerY(cell) + offset.y(),
-                    SpacePhysicsFrameGrid.centerZ(cell) + offset.z());
+            return SpaceGridFrameCoordinates.toRopeScenePosition(frame.frame(), grid, logical);
         }
 
         private Vector3d fromScene(Vector3dc physical) {
             if (frame == null) return new Vector3d(physical);
-            SpacePosition position = SpacePhysicsFrameGrid.toLogicalPosition(frame.frame().cell(),
-                    frame.frame().origin(), new SpaceVec3(physical.x(), physical.y(), physical.z()));
-            SpaceVec3 local = new SpacePosition(grid, 0.0, 0.0, 0.0)
-                    .deltaWithin(position, ROPE_RANGE).orElseThrow();
-            return new Vector3d(local.x(), local.y(), local.z());
+            return SpaceGridFrameCoordinates.fromRopeScenePosition(frame.frame(), grid, physical);
         }
 
         @Override
@@ -2075,8 +1484,14 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
 
         @Override
         public void remove() {
-            inner.remove();
-            untrack();
+            if (removed) return;
+            removed = true;
+            try {
+                inner.remove();
+            } finally {
+                untrack();
+                ropes.remove(this);
+            }
         }
 
         @Override
@@ -2103,7 +1518,7 @@ final class SpaceGridPhysicsPipeline implements InvocationHandler {
                 RopeAttachment other = attachments.get(attachmentPoint == AttachmentPoint.START
                         ? AttachmentPoint.END : AttachmentPoint.START);
                 if (other != null && other.subLevel() != null && hostPipeline(other.subLevel()) != null
-                        && !mergeFrames(other.subLevel(), subLevel)) {
+                        && !transitions.mergeFrames(other.subLevel(), subLevel)) {
                     Astronautics.LOGGER.warn("rope between ships {} and {} cannot share a physics frame",
                             other.subLevel().getUniqueId(), subLevel.getUniqueId());
                     return;

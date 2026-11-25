@@ -64,6 +64,10 @@ public final class SpaceGridDirectory extends SavedData {
         setDirty();
     }
 
+    public void removeShipAddress(UUID shipId) {
+        if (shipAddresses.remove(shipId) != null) setDirty();
+    }
+
     public void setFrameOwnerAddress(UUID shipId, SpaceGridAddress address) {
         if (address.equals(frameOwnerAddresses.put(shipId, address))) return;
         setDirty();

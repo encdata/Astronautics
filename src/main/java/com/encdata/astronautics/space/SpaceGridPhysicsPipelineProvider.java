@@ -9,10 +9,31 @@ import java.util.Comparator;
 import java.util.ServiceLoader;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 
 @PhysicsPipelineProvider.LoadPriority(Integer.MAX_VALUE)
 public final class SpaceGridPhysicsPipelineProvider implements PhysicsPipelineProvider {
     private static final ThreadLocal<PhysicsPipeline> CONSTRAINT_PIPELINE = new ThreadLocal<>();
+    private static final ThreadLocal<Set<UUID>> UNLOADING_SHIPS = ThreadLocal.withInitial(HashSet::new);
+
+    public static void beginShipUnload(UUID shipId) {
+        UNLOADING_SHIPS.get().add(shipId);
+    }
+
+    public static void endShipUnload(UUID shipId) {
+        Set<UUID> unloading = UNLOADING_SHIPS.get();
+        unloading.remove(shipId);
+        if (unloading.isEmpty()) UNLOADING_SHIPS.remove();
+    }
+
+    static boolean consumeShipUnload(UUID shipId) {
+        Set<UUID> unloading = UNLOADING_SHIPS.get();
+        boolean result = unloading.remove(shipId);
+        if (unloading.isEmpty()) UNLOADING_SHIPS.remove();
+        return result;
+    }
 
     public static PhysicsPipeline constraintPipeline() {
         return CONSTRAINT_PIPELINE.get();

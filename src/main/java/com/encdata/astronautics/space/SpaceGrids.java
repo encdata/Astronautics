@@ -43,12 +43,14 @@ import org.joml.Vector2i;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.function.Supplier;
 
 public final class SpaceGrids {
     private static final ThreadLocal<SpaceGridAddress> CONTEXT = new ThreadLocal<>();
     private static final ThreadLocal<SpaceGridAddress> FRAME = new ThreadLocal<>();
-    private static final double SPAWN_PLAYER_RANGE = 512.0;
+    private static final double SPAWN_PLAYER_RANGE = SpaceConstants.GRID_MERGE_RANGE;
+    private static final double MAX_PLAYER_FRAME_SPREAD = SpaceConstants.GRID_MERGE_RANGE * 4.0;
     private static final int ENTITY_SHIP_CHECK_INTERVAL = 5;
 
     private SpaceGrids() {}
@@ -91,10 +93,9 @@ public final class SpaceGrids {
         SpaceEntityState.storeOwner(entity, grid);
     }
 
-    public static void rebasePlayer(ServerPlayer player, SpaceGridAddress positionGrid) {
+    public static boolean rebasePlayer(ServerPlayer player, SpaceGridAddress positionGrid) {
         SpaceGridAddress previous = SpaceProjection.frameGrid(player);
-        if (positionGrid.equals(previous)) return;
-        sendProjectionShift(player, previous, positionGrid);
+        return positionGrid.equals(previous) || sendProjectionShift(player, previous, positionGrid);
     }
 
     public static void moveToFrame(ServerPlayer player, double x, double y, double z) {
@@ -118,16 +119,23 @@ public final class SpaceGrids {
         double x = player.getX() + own.x().subtract(target.x()).intValue() * SpacePosition.GRID_SIZE;
         double y = player.getY() + own.y().subtract(target.y()).intValue() * SpacePosition.GRID_SIZE;
         double z = player.getZ() + own.z().subtract(target.z()).intValue() * SpacePosition.GRID_SIZE;
-        rebasePlayer(player, target);
+        if (!rebasePlayer(player, target)) return;
         moveToFrame(player, x, y, z);
     }
 
     public static SpaceGridAddress playerAnchorGrid(ServerPlayer player) {
+        if (isMainSpace(player.level())) {
+            ServerSubLevel ship = SpaceShipIntegration.findLiveShip(
+                    player, SpaceConstants.GRID_MERGE_RANGE);
+            if (ship != null) return shipGrid((ServerLevel) player.level(), ship);
+        }
+
         List<ServerPlayer> players = player.serverLevel().players();
         List<SpacePosition> positions = players.stream().map(SpaceProjection::observerPosition).toList();
         int start = players.indexOf(player);
         if (start < 0) return SpaceProjection.frameGrid(player);
 
+        SpacePosition origin = positions.get(start);
         boolean[] included = new boolean[players.size()];
         List<Integer> queue = new ArrayList<>();
         List<SpacePosition> anchors = new ArrayList<>();
@@ -138,17 +146,17 @@ public final class SpaceGrids {
             anchors.add(anchor);
             for (int candidate = 0; candidate < players.size(); candidate++) {
                 if (!included[candidate]
-                        && anchor.deltaWithin(positions.get(candidate), SpaceConstants.SHIP_GRID_ATTACH_RANGE).isPresent()) {
+                        && origin.deltaWithin(positions.get(candidate), MAX_PLAYER_FRAME_SPREAD).isPresent()
+                        && anchor.deltaWithin(positions.get(candidate), SpaceConstants.GRID_MERGE_RANGE).isPresent()) {
                     included[candidate] = true;
                     queue.add(candidate);
                 }
             }
         }
-        ServerPlayer stableAnchor = queue.stream().map(players::get)
-                .min((first, second) -> first.getUUID().compareTo(second.getUUID())).orElse(player);
-        SpaceGridAddress currentFrame = SpaceProjection.frameGrid(stableAnchor);
-        return SpacePosition.average(anchors, 30_000_000.0)
-                .map(center -> stableFrame(currentFrame, center, SpaceConstants.SHIP_GRID_ATTACH_RANGE * 0.5))
+        SpaceGridAddress currentFrame = SpaceProjection.frameGrid(player);
+        return SpacePosition.average(anchors, MAX_PLAYER_FRAME_SPREAD)
+                .map(center -> stableFrame(currentFrame, center, SpaceConstants.GRID_MERGE_RANGE * 0.5))
+                .filter(target -> adjacent(currentFrame, target))
                 .orElse(currentFrame);
     }
 
@@ -167,19 +175,20 @@ public final class SpaceGrids {
                 || local < -SpacePosition.GRID_HALF_SIZE - margin;
     }
 
-    public static void alignPlayerFrame(ServerPlayer player, SpaceGridAddress target) {
-        if (SpaceProjection.frameGrid(player).equals(target)) return;
+    public static boolean alignPlayerFrame(ServerPlayer player, SpaceGridAddress target) {
+        SpaceGridAddress currentFrame = SpaceProjection.frameGrid(player);
+        if (currentFrame.equals(target)) return true;
         SpacePosition position = SpaceProjection.observerPosition(player);
         SpacePosition origin = new SpacePosition(target, 0.0, 0.0, 0.0);
         Vec3 local = origin.deltaWithin(position, SpacePosition.GRID_SIZE)
                 .map(delta -> new Vec3(delta.x(), delta.y(), delta.z())).orElse(null);
-        if (local == null) return;
-        rebasePlayer(player, target);
+        if (local == null || !rebasePlayer(player, target)) return false;
         moveToFrame(player, local.x, local.y, local.z);
+        return true;
     }
 
-    public static void shiftClient(ServerPlayer player, SpaceGridAddress from, SpaceGridAddress to) {
-        sendProjectionShift(player, from, to);
+    public static boolean shiftClient(ServerPlayer player, SpaceGridAddress from, SpaceGridAddress to) {
+        return sendProjectionShift(player, from, to);
     }
 
     public static boolean adjacent(SpaceGridAddress first, SpaceGridAddress second) {
@@ -517,7 +526,7 @@ public final class SpaceGrids {
         SpaceGridAddress positionGrid = frameOf(entity);
         SpacePosition logicalPosition = SpaceEntityState.position(entity);
         ServerSubLevel nearbyShip = SpaceShipIntegration.findLiveShip(entity,
-                SpaceConstants.SHIP_GRID_ATTACH_RANGE);
+                SpaceConstants.GRID_MERGE_RANGE);
         if (nearbyShip != null) {
             SpaceGridAddress target = shipGrid((ServerLevel) nearbyShip.getLevel(), nearbyShip);
             rebaseWithPassengers(entity, target, logicalPosition);
@@ -569,7 +578,7 @@ public final class SpaceGrids {
         double nearestDistance = Double.POSITIVE_INFINITY;
         for (ServerPlayer player : ((ServerLevel) entity.level()).players()) {
             SpaceVec3 delta = position.deltaWithin(SpaceProjection.observerPosition(player),
-                    SpaceConstants.SHIP_GRID_ATTACH_RANGE).orElse(null);
+                    SpaceConstants.GRID_MERGE_RANGE).orElse(null);
             if (delta == null) continue;
             double distance = delta.x() * delta.x() + delta.y() * delta.y() + delta.z() * delta.z();
             if (distance < nearestDistance) {
@@ -581,7 +590,7 @@ public final class SpaceGrids {
     }
 
     private static SpacePosition nearbyEntityAnchor(Entity entity, SpacePosition position) {
-        double range = SpaceConstants.SHIP_GRID_ATTACH_RANGE;
+        double range = SpaceConstants.GRID_MERGE_RANGE;
         List<Entity> nearby = unfiltered(() -> entity.level().getEntities(entity,
                 entity.getBoundingBox().inflate(range), candidate -> !(candidate instanceof Player)
                         && !candidate.isPassenger() && !inPlot(candidate)));
@@ -595,7 +604,7 @@ public final class SpaceGrids {
     }
 
     private static boolean nearGridBoundary(SpacePosition position) {
-        double range = SpaceConstants.SHIP_GRID_ATTACH_RANGE;
+        double range = SpaceConstants.GRID_MERGE_RANGE;
         return nearGridBoundary(position.x(), range) || nearGridBoundary(position.y(), range)
                 || nearGridBoundary(position.z(), range);
     }
@@ -631,8 +640,22 @@ public final class SpaceGrids {
     }
 
     static void carryEntities(ServerLevel level, AABB area, SpaceGridAddress from, SpaceGridAddress to, Vec3 jump) {
-        List<Entity> entities = unfiltered(() -> level.getEntities((Entity) null, area,
-                entity -> !(entity instanceof Player) && !entity.isPassenger()));
+        List<Entity> entities = unfiltered(() -> {
+            double extent = Math.max(area.getXsize(), Math.max(area.getYsize(), area.getZsize()));
+            if (extent <= SpacePhysicsFrameGrid.SPACING) {
+                return level.getEntities((Entity) null, area,
+                        entity -> !(entity instanceof Player) && !entity.isPassenger());
+            }
+
+            List<Entity> nearby = new ArrayList<>();
+            for (Entity entity : level.getAllEntities()) {
+                if (!(entity instanceof Player) && !entity.isPassenger() && !entity.isRemoved()
+                        && entity.getBoundingBox().intersects(area)) {
+                    nearby.add(entity);
+                }
+            }
+            return nearby;
+        });
         for (Entity entity : entities) {
             if (inPlot(entity) || !from.equals(frameOf(entity))) continue;
             carry(entity, to, jump);
@@ -645,7 +668,7 @@ public final class SpaceGrids {
                     || !from.equals(frameOf(player))) {
                 continue;
             }
-            rebasePlayer(player, to);
+            if (!rebasePlayer(player, to)) continue;
             moveToFrame(player, player.getX() + jump.x, player.getY() + jump.y, player.getZ() + jump.z);
         }
     }
@@ -682,7 +705,7 @@ public final class SpaceGrids {
         SpaceEntityState.setFrame(entity, spawnFrame(level, entity));
         set(entity, spawnGrid(level, entity));
         ServerSubLevel nearbyShip = SpaceShipIntegration.findLiveShip(entity,
-                SpaceConstants.SHIP_GRID_ATTACH_RANGE);
+                SpaceConstants.GRID_MERGE_RANGE);
         if (nearbyShip != null) set(entity,
                 simulationGrid((ServerLevel) nearbyShip.getLevel(), nearbyShip));
     }
@@ -748,19 +771,21 @@ public final class SpaceGrids {
         return player == null ? SpaceGridAddress.ORIGIN : of(player);
     }
 
-    private static void sendProjectionShift(ServerPlayer player, SpaceGridAddress previous,
-                                             SpaceGridAddress current) {
+    private static boolean sendProjectionShift(ServerPlayer player, SpaceGridAddress previous,
+                                                SpaceGridAddress current) {
         BigInteger x = previous.x().subtract(current.x());
         BigInteger y = previous.y().subtract(current.y());
         BigInteger z = previous.z().subtract(current.z());
         if (x.abs().compareTo(BigInteger.ONE) > 0 || y.abs().compareTo(BigInteger.ONE) > 0
-                || z.abs().compareTo(BigInteger.ONE) > 0) return;
-        long revision = AstronauticsNetworkSync.rebaseSpaceGrid(player, current);
+                || z.abs().compareTo(BigInteger.ONE) > 0) return false;
+        OptionalLong revision = AstronauticsNetworkSync.rebaseSpaceGrid(player, current);
+        if (revision.isEmpty()) return true;
         player.connection.send(new ClientboundCustomPayloadPacket(new SpaceGridPoseRebasePayload(
-                revision, current,
+                revision.getAsLong(), current,
                 x.doubleValue() * SpacePosition.GRID_SIZE,
                 y.doubleValue() * SpacePosition.GRID_SIZE,
                 z.doubleValue() * SpacePosition.GRID_SIZE)));
+        return true;
     }
 
     private static boolean isLocal(double value) {

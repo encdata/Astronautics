@@ -20,12 +20,17 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import org.joml.Vector3dc;
+
+import java.util.ArrayDeque;
+import java.util.Queue;
 
 @EventBusSubscriber(modid = Astronautics.MOD_ID, value = Dist.CLIENT)
 public final class SpaceGridClientRebase {
     private static final int LERP_STEPS = 3;
+    private static final Queue<SpaceGridPoseRebasePayload> PENDING_REBASES = new ArrayDeque<>();
 
     private SpaceGridClientRebase() {}
 
@@ -38,9 +43,28 @@ public final class SpaceGridClientRebase {
     }
 
     public static void apply(SpaceGridPoseRebasePayload payload) {
-        if (!SpaceGridClientState.applyRebase(payload.revision(), payload.address())) return;
         ClientLevel level = Minecraft.getInstance().level;
-        if (level == null) return;
+        if (level == null) {
+            PENDING_REBASES.add(payload);
+            return;
+        }
+        if (!SpaceConstants.isSpace(level)) return;
+        applyLoaded(level, payload);
+    }
+
+    @SubscribeEvent
+    public static void onClientTick(ClientTickEvent.Post event) {
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null || PENDING_REBASES.isEmpty()) return;
+        if (!SpaceConstants.isSpace(level)) {
+            PENDING_REBASES.clear();
+            return;
+        }
+        while (!PENDING_REBASES.isEmpty()) applyLoaded(level, PENDING_REBASES.remove());
+    }
+
+    private static void applyLoaded(ClientLevel level, SpaceGridPoseRebasePayload payload) {
+        if (!SpaceGridClientState.applyRebase(payload.revision(), payload.address())) return;
 
         SubLevelContainer plots = SubLevelContainer.getContainer(level);
         LongOpenHashSet chunks = new LongOpenHashSet();

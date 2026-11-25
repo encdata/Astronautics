@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.UUID;
 
 public final class AstronauticsNetworkSync {
@@ -142,7 +143,9 @@ public final class AstronauticsNetworkSync {
         }
         if (previous != null && previous.level() == player.level().dimension()
                 && com.encdata.astronautics.space.SpaceGrids.pulledOntoShip(player, previous.address(), address)) {
-            com.encdata.astronautics.space.SpaceGrids.shiftClient(player, previous.address(), address);
+            if (!com.encdata.astronautics.space.SpaceGrids.shiftClient(player, previous.address(), address)) {
+                return;
+            }
             com.encdata.astronautics.space.SpaceGrids.moveToFrame(player,
                     player.getX(), player.getY(), player.getZ());
             return;
@@ -164,11 +167,15 @@ public final class AstronauticsNetworkSync {
         player.connection.send(new ClientboundCustomPayloadPacket(new SpaceGridSyncPayload(revision, address)));
     }
 
-    public static long rebaseSpaceGrid(ServerPlayer player, SpaceGridAddress address) {
+    public static OptionalLong rebaseSpaceGrid(ServerPlayer player, SpaceGridAddress address) {
         SpaceGridSync previous = SPACE_GRIDS.get(player.getUUID());
+        if (previous != null && previous.level() != player.level().dimension()) {
+            sendSpaceGrid(player, address);
+            return OptionalLong.empty();
+        }
         long revision = previous == null ? 0L : previous.revision() + 1L;
         SPACE_GRIDS.put(player.getUUID(), new SpaceGridSync(revision, address, player.level().dimension()));
-        return revision;
+        return OptionalLong.of(revision);
     }
 
     private record SpaceGridSync(long revision, SpaceGridAddress address,
