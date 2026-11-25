@@ -1,6 +1,7 @@
 package com.encdata.astronautics.mixin;
 
 import com.encdata.astronautics.space.SpaceChunkLoading;
+import com.encdata.astronautics.space.SpaceConstants;
 import com.encdata.astronautics.space.SpaceGrids;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import dev.ryanhcode.sable.Sable;
@@ -37,6 +38,17 @@ public abstract class SpaceGridTrackingMixin {
 
     @ModifyExpressionValue(
             method = "updatePlayer",
+            at = @At(value = "INVOKE", target = "Ljava/lang/Math;min(II)I"),
+            require = 1
+    )
+    private int astronautics$projectionTrackingRange(int range, @Local(argsOnly = true) ServerPlayer player) {
+        Vec3 offset = SpaceGrids.viewOffset(player, this.entity);
+        return offset != null && !offset.equals(Vec3.ZERO)
+                ? Math.max(range, (int) SpaceConstants.SHIP_GRID_ATTACH_RANGE) : range;
+    }
+
+    @ModifyExpressionValue(
+            method = "updatePlayer",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;broadcastToPlayer(Lnet/minecraft/server/level/ServerPlayer;)Z"),
             require = 1
     )
@@ -62,6 +74,7 @@ public abstract class SpaceGridTrackingMixin {
                                                    Operation<Boolean> original) {
         Vec3 offset = SpaceGrids.viewOffset(player, this.entity);
         if (offset == null) return original.call(chunkMap, player, x, z);
+        if (!offset.equals(Vec3.ZERO)) return true;
         if (SpaceGrids.isMainSpace(this.entity.level())
                 && SpaceChunkLoading.isVirtual((ServerLevel) this.entity.level(), x, z)) {
             return true;

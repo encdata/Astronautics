@@ -23,6 +23,7 @@
     "SpaceSubLevelObserverProjectionMixin",
     "SpaceChunkMapMixin",
     "SpaceDistanceManagerMixin",
+    "C2meEmptySpaceChunkMixin",
     "SpacePlayerChunkSenderMixin",
     "DashPanelsModuleEntryMixin",
     "SpaceFloatingPoseMixin",

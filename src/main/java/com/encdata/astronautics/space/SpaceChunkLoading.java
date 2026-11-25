@@ -106,11 +106,11 @@ public final class SpaceChunkLoading {
 
     @SubscribeEvent
     public static void onLevelTick(LevelTickEvent.Post event) {
-        if (!(event.getLevel() instanceof ServerLevel level)
-                || !SpaceConstants.isSpace(level)
-                || !isActive(level)) {
-            return;
+        if (!(event.getLevel() instanceof ServerLevel level) || !SpaceConstants.isSpace(level)) return;
+        if (level.getChunkSource().chunkMap.getDistanceManager() instanceof SpaceTickets tickets) {
+            tickets.astronautics$markSpace();
         }
+        if (!isActive(level)) return;
 
         State state = STATES.computeIfAbsent(level, State::new);
 
@@ -391,6 +391,7 @@ public final class SpaceChunkLoading {
         State(ServerLevel level) {
             this.level = level;
             this.held.defaultReturnValue(MISSING);
+            this.projectionHeld.defaultReturnValue(MISSING);
         }
 
         void track(ServerPlayer player) {

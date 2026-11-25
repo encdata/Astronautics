@@ -12,21 +12,30 @@ public final class AstronauticsMixinPlugin implements IMixinConfigPlugin {
     private static final String DASH_PANELS_MIXIN =
             "com.encdata.astronautics.mixin.DashPanelsModuleEntryMixin";
     private static final String DASH_PANELS_MOD_ID = "dashpanels";
-    private static final Set<String> SPACE_CHUNK_MIXINS = Set.of(
+    private static final String SPACE_DISTANCE_MANAGER_MIXIN =
+            "com.encdata.astronautics.mixin.SpaceDistanceManagerMixin";
+    private static final String C2ME_EMPTY_CHUNK_MIXIN =
+            "com.encdata.astronautics.mixin.C2meEmptySpaceChunkMixin";
+    private static final Set<String> VANILLA_CHUNK_MIXINS = Set.of(
             "com.encdata.astronautics.mixin.SpaceChunkMapMixin",
-            "com.encdata.astronautics.mixin.SpaceDistanceManagerMixin",
             "com.encdata.astronautics.mixin.SpacePlayerChunkSenderMixin");
-    private static final List<String> CHUNK_SYSTEM_MOD_IDS = List.of("moonrise", "c2me");
+    private static final String MOONRISE_MOD_ID = "moonrise";
+    private static final String C2ME_MOD_ID = "c2me";
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         if (mixinClassName.equals(DASH_PANELS_MIXIN)) {
             return FMLLoader.getLoadingModList().getModFileById(DASH_PANELS_MOD_ID) != null;
         }
-        if (SPACE_CHUNK_MIXINS.contains(mixinClassName)) {
-            for (String modId : CHUNK_SYSTEM_MOD_IDS) {
-                if (FMLLoader.getLoadingModList().getModFileById(modId) != null) return false;
-            }
+        if (VANILLA_CHUNK_MIXINS.contains(mixinClassName)) {
+            return FMLLoader.getLoadingModList().getModFileById(MOONRISE_MOD_ID) == null
+                    && FMLLoader.getLoadingModList().getModFileById(C2ME_MOD_ID) == null;
+        }
+        if (mixinClassName.equals(SPACE_DISTANCE_MANAGER_MIXIN)) {
+            return FMLLoader.getLoadingModList().getModFileById(MOONRISE_MOD_ID) == null;
+        }
+        if (mixinClassName.equals(C2ME_EMPTY_CHUNK_MIXIN)) {
+            return FMLLoader.getLoadingModList().getModFileById(C2ME_MOD_ID) != null;
         }
         return true;
     }
