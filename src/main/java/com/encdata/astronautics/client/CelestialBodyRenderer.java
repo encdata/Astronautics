@@ -306,13 +306,10 @@ final class CelestialBodyRenderer {
 
     static boolean isObserverBody(CelestialBodyData body) {
         Entity observer = Minecraft.getInstance().getCameraEntity();
-        if (observer != null && SpaceCatalog.isPlanetDimension(observer.level().dimension())
-                && SpaceFlightPhysics.logicalAltitude(observer) >= SpaceFlightPhysics.GRAVITY_FADE_START) {
-            return false;
-        }
-        return observer != null && body.dimension()
-                .map(dimension -> dimension.equals(observer.level().dimension().location()))
-                .orElse(false);
+        if (observer == null || body.dimension()
+                .filter(observer.level().dimension().location()::equals).isEmpty()) return false;
+
+        return SpaceFlightPhysics.logicalAltitude(observer) < SpaceSkyClient.CELESTIAL_VISIBILITY_START;
     }
 
 }

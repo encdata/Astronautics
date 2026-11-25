@@ -24,8 +24,10 @@ final class CelestialObserver {
     }
 
     static SpaceVec3 universePosition(Entity observer) {
+        if (!SpaceConstants.isSpace(observer.level())) {
+            return renderPosition(observer, skyOrientation(observer));
+        }
         SpaceVec3 position = bodyPosition(observer);
-        if (!SpaceConstants.isSpace(observer.level())) return position;
         SpaceGridAddress grid;
         if (SpaceGridClientState.received()) {
             grid = SpaceGridClientState.address();
@@ -46,9 +48,9 @@ final class CelestialObserver {
             SpaceVec3 planetPosition = CelestialGalaxyCache.bodyPosition(
                     bodyData.id(), timeDays);
             if (planetPosition != null) {
-                if (bodyData.environment().customSkybox()
-                        && SpaceFlightPhysics.logicalAltitude(observer) < SpaceFlightPhysics.GRAVITY_FADE_START) {
-                    return planetPosition;
+                double altitude = SpaceFlightPhysics.logicalAltitude(observer);
+                if (bodyData.environment().customSkybox()) {
+                    if (altitude < SpaceFlightPhysics.GRAVITY_FADE_START) return planetPosition;
                 }
                 return planetPosition.add(new SpaceVec3(observer.getX(), observer.getY(), observer.getZ()));
             }
@@ -108,16 +110,22 @@ final class CelestialObserver {
     private static SpaceVec3 renderPosition(Entity observer, Quaternionf skyOrientation) {
         var bodyData = SpaceCatalog.bodyForDimension(observer.level().dimension()).orElse(null);
         if (bodyData != null) {
-            if (bodyData.environment().customSkybox()
-                    && SpaceFlightPhysics.logicalAltitude(observer) >= SpaceFlightPhysics.GRAVITY_FADE_START) {
+            double altitude = SpaceFlightPhysics.logicalAltitude(observer);
+            if (altitude >= SpaceSkyClient.CELESTIAL_VISIBILITY_START) {
+                double progress = Math.clamp(
+                        (altitude - SpaceSkyClient.CELESTIAL_VISIBILITY_START)
+                                / (SpaceFlightPhysics.SPACE_ALTITUDE
+                                - SpaceSkyClient.CELESTIAL_VISIBILITY_START),
+                        0.0, 1.0);
+                Vector3f ascentOffset = new Vector3f(0.0f,
+                        (float) (bodyData.radius() + 1000.0 * progress), 0.0f);
+                if (bodyData.environment().customSkybox()) {
+                    skyOrientation.transformInverse(ascentOffset);
+                }
                 double timeDays = timeDays(observer.level());
                 SpaceVec3 planetPosition = CelestialGalaxyCache.bodyPosition(bodyData.id(), timeDays);
                 if (planetPosition != null) {
-                    Vector3f renderDownOffset = new Vector3f(0.0f,
-                            (float) (bodyData.radius() + 1000.0), 0.0f);
-                    skyOrientation.transformInverse(renderDownOffset);
-                    return planetPosition.add(new SpaceVec3(renderDownOffset.x,
-                            renderDownOffset.y, renderDownOffset.z));
+                    return planetPosition.add(new SpaceVec3(ascentOffset.x, ascentOffset.y, ascentOffset.z));
                 }
             }
         }

@@ -7,6 +7,8 @@ import net.minecraft.client.Camera;
 import net.minecraft.world.entity.Entity;
 
 public final class SpaceSkyClient {
+    static final double CELESTIAL_VISIBILITY_START = 1000.0;
+
     private SpaceSkyClient() {}
 
     public static boolean shouldSuppressVanillaSky(Camera camera) {
@@ -21,6 +23,6 @@ public final class SpaceSkyClient {
 
         double altitude = SpaceFlightPhysics.logicalAltitude(entity);
         return (customSky && altitude < SpaceFlightPhysics.SPACE_ALTITUDE)
-                || (planet && altitude >= SpaceFlightPhysics.GRAVITY_FADE_START);
+                || (planet && altitude >= SpaceSkyClient.CELESTIAL_VISIBILITY_START);
     }
 }

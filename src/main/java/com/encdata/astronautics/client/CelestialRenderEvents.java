@@ -112,9 +112,8 @@ public final class CelestialRenderEvents {
         double altitude = SpaceConstants.isSpace(level) || usesOrbitalOnlyCustomSky(entity)
                 ? SpaceFlightPhysics.SPACE_ALTITUDE
                 : SpaceFlightPhysics.logicalAltitude(entity);
-        float fade = (float) SpaceFlightPhysics.gravityFade(altitude);
         float localAtmosphere = AtmosphereClientEvents.localAtmosphereStrength(entity);
-        if (fade <= 0.0f && localAtmosphere <= 0.0f) return;
+        if (altitude < SpaceSkyClient.CELESTIAL_VISIBILITY_START && localAtmosphere <= 0.0f) return;
 
         float celestialTimeSeconds = (float) (level.getDayTime()
                 + deltaTracker.getGameTimeDeltaPartialTick(false)) / 20.0f;
