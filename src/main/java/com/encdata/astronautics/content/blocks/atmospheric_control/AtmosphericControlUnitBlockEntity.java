@@ -46,6 +46,8 @@ public final class AtmosphericControlUnitBlockEntity extends KineticBlockEntity
         var subLevel = Sable.HELPER.getContaining(level, pos);
         if (subLevel instanceof ServerSubLevel serverSubLevel) {
             ShipAtmosphereSystem.register(unit, serverSubLevel);
+        } else {
+            ShipAtmosphereSystem.registerWorld(unit);
         }
     }
 

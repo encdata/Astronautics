@@ -11,6 +11,7 @@ import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.simulated_team.simulated.content.blocks.docking_connector.DockingConnectorBlockEntity;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Player;
@@ -33,6 +34,9 @@ public final class ShipAtmosphereSystem {
     private static final Map<UUID, Map<Long, ShipAtmosphereScanner.UnitRef>> UNITS = new HashMap<>();
     private static final Set<UUID> DIRTY_SHIPS = new HashSet<>();
     private static final Map<UUID, Docked> DOCKED = new HashMap<>();
+    private static final Map<Level, Map<Long, AtmosphericControlUnitBlockEntity>> WORLD_UNITS = new HashMap<>();
+    private static final Map<Level, ShipAtmosphereScanner.ShipAtmosphere> WORLD_ATMOSPHERES = new HashMap<>();
+    private static final Set<Level> DIRTY_WORLDS = new HashSet<>();
 
     private record Link(ShipAtmosphereScanner.Compartment room, UUID otherShip, long otherPort) {}
 
@@ -45,6 +49,9 @@ public final class ShipAtmosphereSystem {
         UNITS.clear();
         DIRTY_SHIPS.clear();
         DOCKED.clear();
+        WORLD_UNITS.clear();
+        WORLD_ATMOSPHERES.clear();
+        DIRTY_WORLDS.clear();
     }
 
     public static void register(AtmosphericControlUnitBlockEntity unit, ServerSubLevel subLevel) {
@@ -62,17 +69,48 @@ public final class ShipAtmosphereSystem {
         if (level == null || level.isClientSide) return;
         var subLevel = Sable.HELPER.getContaining(level, unit.getBlockPos());
         if (subLevel instanceof ServerSubLevel serverSubLevel) DIRTY_SHIPS.add(serverSubLevel.getUniqueId());
+        else if (WORLD_UNITS.containsKey(level)) DIRTY_WORLDS.add(level);
+    }
+
+    public static void registerWorld(AtmosphericControlUnitBlockEntity unit) {
+        Level level = unit.getLevel();
+        if (level == null || level.isClientSide) return;
+        Map<Long, AtmosphericControlUnitBlockEntity> units = WORLD_UNITS.computeIfAbsent(
+                level, ignored -> new HashMap<>());
+        if (units.putIfAbsent(unit.getBlockPos().asLong(), unit) == null) DIRTY_WORLDS.add(level);
     }
 
     public static void invalidate(Level level, BlockPos pos) {
         if (level.isClientSide) return;
         var subLevel = Sable.HELPER.getContaining(level, pos);
         if (subLevel instanceof ServerSubLevel serverSubLevel) DIRTY_SHIPS.add(serverSubLevel.getUniqueId());
+        else markWorldDirtyNear(level, pos);
+    }
+
+    public static void onWorldChunkLoaded(Level level, ChunkPos chunkPos) {
+        if (level.isClientSide) return;
+        Map<Long, AtmosphericControlUnitBlockEntity> units = WORLD_UNITS.get(level);
+        if (units == null) return;
+        for (AtmosphericControlUnitBlockEntity unit : units.values()) {
+            ChunkPos unitChunk = new ChunkPos(unit.getBlockPos());
+            if (Math.abs(unitChunk.x - chunkPos.x) <= 4 && Math.abs(unitChunk.z - chunkPos.z) <= 4) {
+                DIRTY_WORLDS.add(level);
+                return;
+            }
+        }
+    }
+
+    public static void clearWorld(Level level) {
+        WORLD_UNITS.remove(level);
+        WORLD_ATMOSPHERES.remove(level);
+        DIRTY_WORLDS.remove(level);
     }
 
     public static void tickAll(long gameTime) {
         removeInactiveUnits();
         updateAtmospheres(gameTime);
+        removeInactiveWorldUnits();
+        updateWorldAtmospheres(gameTime);
         ATMOSPHERES.keySet().removeIf(id -> !UNITS.containsKey(id));
         shareThroughDocks();
         DIRTY_SHIPS.removeIf(id -> !UNITS.containsKey(id) && !DOCKED.containsKey(id));
@@ -193,13 +231,71 @@ public final class ShipAtmosphereSystem {
                     : previous;
             ATMOSPHERES.put(id, atmosphere);
             for (ShipAtmosphereScanner.Compartment room : atmosphere.rooms()) {
-                updateCompartmentOxygen(room, refs, transferTick);
+                updateShipCompartmentOxygen(room, refs, transferTick);
             }
         }
     }
 
+    private static void removeInactiveWorldUnits() {
+        var worlds = WORLD_UNITS.entrySet().iterator();
+        while (worlds.hasNext()) {
+            var world = worlds.next();
+            world.getValue().values().removeIf(unit -> unit.getLevel() != world.getKey() || unit.isRemoved());
+            if (world.getValue().isEmpty()) {
+                WORLD_ATMOSPHERES.remove(world.getKey());
+                DIRTY_WORLDS.remove(world.getKey());
+                worlds.remove();
+            }
+        }
+    }
+
+    private static void updateWorldAtmospheres(long gameTime) {
+        boolean transferTick = gameTime % DISTRIBUTOR_TRANSFER_INTERVAL == 0;
+        for (var entry : WORLD_UNITS.entrySet()) {
+            Level level = entry.getKey();
+            Map<Long, AtmosphericControlUnitBlockEntity> units = entry.getValue();
+            ShipAtmosphereScanner.ShipAtmosphere atmosphere = WORLD_ATMOSPHERES.get(level);
+            if (DIRTY_WORLDS.remove(level) || atmosphere == null) {
+                atmosphere = ShipAtmosphereScanner.scanWorldRooms(level, units, atmosphere);
+                WORLD_ATMOSPHERES.put(level, atmosphere);
+            }
+            for (ShipAtmosphereScanner.Compartment room : atmosphere.rooms()) {
+                updateWorldCompartmentOxygen(room, units, transferTick);
+            }
+        }
+    }
+
+    private static void markWorldDirtyNear(Level level, BlockPos changedPos) {
+        Map<Long, AtmosphericControlUnitBlockEntity> units = WORLD_UNITS.get(level);
+        if (units == null) return;
+        for (AtmosphericControlUnitBlockEntity unit : units.values()) {
+            BlockPos unitPos = unit.getBlockPos();
+            if (Math.abs(unitPos.getX() - changedPos.getX()) <= 64
+                    && Math.abs(unitPos.getY() - changedPos.getY()) <= 64
+                    && Math.abs(unitPos.getZ() - changedPos.getZ()) <= 64) {
+                DIRTY_WORLDS.add(level);
+                return;
+            }
+        }
+    }
+
+    private static void updateShipCompartmentOxygen(ShipAtmosphereScanner.Compartment room,
+                                                    Map<Long, ShipAtmosphereScanner.UnitRef> refs,
+                                                    boolean transferTick) {
+        updateCompartmentOxygen(room, position -> {
+            ShipAtmosphereScanner.UnitRef ref = refs.get(position);
+            return ref == null ? null : ref.unit();
+        }, transferTick);
+    }
+
+    private static void updateWorldCompartmentOxygen(ShipAtmosphereScanner.Compartment room,
+                                                     Map<Long, AtmosphericControlUnitBlockEntity> distributors,
+                                                     boolean transferTick) {
+        updateCompartmentOxygen(room, distributors::get, transferTick);
+    }
+
     private static void updateCompartmentOxygen(ShipAtmosphereScanner.Compartment room,
-                                                Map<Long, ShipAtmosphereScanner.UnitRef> refs,
+                                                java.util.function.LongFunction<AtmosphericControlUnitBlockEntity> distributorAt,
                                                 boolean transferTick) {
         if (!room.sealed) {
             room.oxygen = 0.0;
@@ -210,10 +306,10 @@ public final class ShipAtmosphereSystem {
         int required = Math.max(0, (int) Math.ceil(room.capacity() - room.oxygen));
         for (long distributorPos : room.distributors) {
             if (required <= 0) break;
-            ShipAtmosphereScanner.UnitRef distributor = refs.get(distributorPos);
-            if (distributor == null || !distributor.unit().isPowered()) continue;
+            AtmosphericControlUnitBlockEntity distributor = distributorAt.apply(distributorPos);
+            if (distributor == null || !distributor.isPowered()) continue;
 
-            int transferred = distributor.unit().drainOxygen(
+            int transferred = distributor.drainOxygen(
                     Math.min(DISTRIBUTOR_TRANSFER_PER_TICK, required));
             room.oxygen += transferred;
             required -= transferred;
@@ -265,6 +361,15 @@ public final class ShipAtmosphereSystem {
             if (direct != null && entry.getKey().equals(direct.getUniqueId())) continue;
             ShipAtmosphereScanner.Compartment room = roomAt(player, entry.getValue().ship());
             if (room != null) return room;
+        }
+        ShipAtmosphereScanner.ShipAtmosphere worldAtmosphere = WORLD_ATMOSPHERES.get(player.level());
+        if (worldAtmosphere != null) {
+            double[] heights = {player.getBbHeight() * 0.5, 0.0, player.getEyeHeight()};
+            for (double height : heights) {
+                BlockPos pos = BlockPos.containing(player.getX(), player.getY() + height, player.getZ());
+                ShipAtmosphereScanner.Compartment room = worldAtmosphere.roomAt(pos);
+                if (room != null) return room;
+            }
         }
         return null;
     }

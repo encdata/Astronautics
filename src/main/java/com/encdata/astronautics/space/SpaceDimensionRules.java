@@ -12,6 +12,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.common.util.TriState;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.level.ChunkEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.EntityTickEvent;
@@ -24,6 +25,18 @@ public final class SpaceDimensionRules {
     public static void onSpaceLevelLoad(LevelEvent.Load event) {
         if (event.getLevel() instanceof Level level && SpaceConstants.isSpace(level)) {
             SpaceWorldBorderRegistry.mark(level.getWorldBorder());
+        }
+    }
+
+    @SubscribeEvent
+    public static void onLevelUnload(LevelEvent.Unload event) {
+        if (event.getLevel() instanceof Level level) ShipAtmosphereSystem.clearWorld(level);
+    }
+
+    @SubscribeEvent
+    public static void onChunkLoad(ChunkEvent.Load event) {
+        if (event.getLevel() instanceof Level level) {
+            ShipAtmosphereSystem.onWorldChunkLoaded(level, event.getChunk().getPos());
         }
     }
 

@@ -36,6 +36,19 @@ final class ShipAtmosphereScanner {
         return subLevel == null ? new ShipAtmosphere(List.of()) : scanRooms(subLevel, seeds, previous);
     }
 
+    static ShipAtmosphere scanWorldRooms(Level level,
+                                         Map<Long, AtmosphericControlUnitBlockEntity> units,
+                                         ShipAtmosphere previous) {
+        List<Seed> seeds = new ArrayList<>();
+        for (var entry : units.entrySet()) {
+            BlockPos pos = entry.getValue().getBlockPos();
+            List<BlockPos> starts = new ArrayList<>();
+            for (Direction direction : Direction.values()) starts.add(pos.relative(direction));
+            seeds.add(new Seed(pos, starts, entry.getKey()));
+        }
+        return scanRooms(level, seeds, previous, null);
+    }
+
     static ShipAtmosphere scanFromPorts(ServerSubLevel subLevel, Set<Long> ports, ShipAtmosphere previous) {
         Level level = subLevel.getLevel();
         List<Seed> seeds = new ArrayList<>();
@@ -78,6 +91,11 @@ final class ShipAtmosphereScanner {
     }
 
     private static ShipAtmosphere scanRooms(ServerSubLevel subLevel, List<Seed> seeds, ShipAtmosphere previous) {
+        return scanRooms(subLevel.getLevel(), seeds, previous, subLevel.getPlot().getBoundingBox());
+    }
+
+    private static ShipAtmosphere scanRooms(Level level, List<Seed> seeds,
+                                             ShipAtmosphere previous, BoundingBox3ic bounds) {
         List<Compartment> rooms = new ArrayList<>();
         int remainingCells = MAX_SCAN_CELLS_PER_SHIP;
         for (Seed seed : seeds) {
@@ -87,7 +105,7 @@ final class ShipAtmosphereScanner {
                 continue;
             }
 
-            Compartment scanned = scan(subLevel, seed, remainingCells);
+            Compartment scanned = scan(level, bounds, seed, remainingCells);
             remainingCells -= scanned.cells.size();
             seed.addTo(scanned);
             Compartment match = null;
@@ -132,9 +150,7 @@ final class ShipAtmosphereScanner {
         return null;
     }
 
-    private static Compartment scan(ServerSubLevel subLevel, Seed seed, int remainingCells) {
-        Level level = subLevel.getLevel();
-        var bounds = subLevel.getPlot().getBoundingBox();
+    private static Compartment scan(Level level, BoundingBox3ic bounds, Seed seed, int remainingCells) {
         ArrayDeque<BlockPos> queue = new ArrayDeque<>();
         Set<BlockPos> visited = new HashSet<>();
         Set<BlockPos> connectors = new HashSet<>();
@@ -144,11 +160,16 @@ final class ShipAtmosphereScanner {
         queue.addAll(seed.starts);
         while (!queue.isEmpty()) {
             BlockPos pos = queue.removeFirst();
-            if (outside(bounds, pos)) {
+            if (bounds != null && outside(bounds, pos)) {
                 sealed = false;
                 continue;
             }
+            if (pos.getY() < level.getMinBuildHeight() || pos.getY() >= level.getMaxBuildHeight()) continue;
             if (visited.contains(pos)) continue;
+            if (!level.hasChunkAt(pos)) {
+                sealed = false;
+                break;
+            }
             BlockState state = level.getBlockState(pos);
             if (!isOpen(level, pos, state)) {
                 if (state.getBlock() instanceof DockingConnectorBlock) {
