@@ -8,7 +8,6 @@ import dev.ryanhcode.sable.sublevel.SubLevel;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ChunkLevel;
@@ -50,21 +49,24 @@ import java.util.UUID;
 public final class SpaceChunkLoading {
     public static final TicketType<ChunkPos> ENTITY_AREA =
             TicketType.create("astronautics_space_entities", Comparator.comparingLong(ChunkPos::toLong));
+    private static final TicketType<ChunkPos> PROJECTION_AREA =
+            TicketType.create("astronautics_space_projection", Comparator.comparingLong(ChunkPos::toLong));
 
     private static final int TICKET_DISTANCE = ChunkLevel.byStatus(FullChunkStatus.FULL)
             - ChunkLevel.byStatus(FullChunkStatus.ENTITY_TICKING);
+    private static final int PROJECTION_TICKET_DISTANCE = ChunkLevel.byStatus(FullChunkStatus.FULL)
+            - ChunkLevel.byStatus(FullChunkStatus.FULL);
     private static final int REFRESH_INTERVAL = 2;
     private static final int PLAYER_RADIUS = 2;
     private static final double LOOKAHEAD_SECONDS = 0.75;
     private static final int MAX_COLUMNS = 16384;
+    private static final int MAX_PROJECTION_COLUMNS = 40000;
     private static final double SHIP_MARGIN = 2.0;
-    private static final double ABOARD_MARGIN = 6.0;
     private static final double DECK_HEADROOM = 4.0;
     private static final double POSE_SLACK_SECONDS = 0.15;
     private static final double CARRY_SPEED = 40.0;
     private static final double MAX_CARRY_SPEED = 5000.0;
     private static final int RELEASE_DELAY_TICKS = 6;
-    private static final int FAST_HOLD_TICKS = 40;
     private static final double SMOOTHING = 0.5;
     private static final double EDGE_MARGIN = 64.0;
     private static final double TELEPORT_DISTANCE = 1024.0;
@@ -137,12 +139,13 @@ public final class SpaceChunkLoading {
     private static void collect(ServerLevel level, State state) {
         LongOpenHashSet wanted = state.wanted;
         wanted.clear();
+        LongOpenHashSet wantedProjection = state.wantedProjection;
+        wantedProjection.clear();
 
         int simulation = level.getServer().getPlayerList().getSimulationDistance();
         boolean spectatorsGenerate = level.getGameRules().getBoolean(GameRules.RULE_SPECTATORSGENERATECHUNKS);
         SubLevelContainer container = SubLevelContainer.getContainer(level);
         long now = level.getGameTime();
-        state.fastUntil.object2LongEntrySet().removeIf(entry -> entry.getLongValue() < now);
 
         List<SpaceChunkSweep> windows = new ArrayList<>();
 
@@ -161,26 +164,22 @@ public final class SpaceChunkLoading {
             if (window == null) continue;
 
             windows.add(window);
-            double reach = simulation * 16.0 + EDGE_MARGIN;
+            double reach = simulation * 16.0 + EDGE_MARGIN + SpaceConstants.SHIP_GRID_ATTACH_RANGE;
             List<double[]> shifts = edgeShifts(player.getX() - reach, player.getZ() - reach,
                     player.getX() + reach, player.getZ() + reach);
             for (double[] shift : shifts) {
                 SpaceChunkSweep mirror = SpaceChunkSweep.ofChunks(chunkX + (int) (shift[0] / 16.0),
                         chunkZ + (int) (shift[1] / 16.0), simulation, dx, dz);
                 if (mirror != null) windows.add(mirror);
+                addProjectionArea(player.getX() + shift[0], player.getZ() + shift[1], wantedProjection);
             }
 
-            double speed = Math.max(Math.sqrt(vx * vx + vz * vz), shipSpeedAround(container, player));
-            if (speed > CARRY_SPEED) {
-                state.fastUntil.put(player.getUUID(), now + FAST_HOLD_TICKS);
-            } else if (!state.fastUntil.containsKey(player.getUUID())) {
-                SpaceChunkSweep area = SpaceChunkSweep.ofChunks(chunkX, chunkZ, PLAYER_RADIUS, dx, dz);
-                if (area != null) addAll(area, wanted);
-                for (double[] shift : shifts) {
-                    SpaceChunkSweep mirror = SpaceChunkSweep.ofChunks(chunkX + (int) (shift[0] / 16.0),
-                            chunkZ + (int) (shift[1] / 16.0), PLAYER_RADIUS, dx, dz);
-                    if (mirror != null) addAll(mirror, wanted);
-                }
+            SpaceChunkSweep area = SpaceChunkSweep.ofChunks(chunkX, chunkZ, PLAYER_RADIUS, dx, dz);
+            if (area != null) addAll(area, wanted);
+            for (double[] shift : shifts) {
+                SpaceChunkSweep mirror = SpaceChunkSweep.ofChunks(chunkX + (int) (shift[0] / 16.0),
+                        chunkZ + (int) (shift[1] / 16.0), PLAYER_RADIUS, dx, dz);
+                if (mirror != null) addAll(mirror, wanted);
             }
         }
 
@@ -243,6 +242,7 @@ public final class SpaceChunkLoading {
 
         if (container != null) {
             wanted.removeIf((long pos) -> container.inBounds(ChunkPos.getX(pos), ChunkPos.getZ(pos)));
+            wantedProjection.removeIf((long pos) -> container.inBounds(ChunkPos.getX(pos), ChunkPos.getZ(pos)));
         }
 
         if (wanted.size() >= MAX_COLUMNS && !state.warnedCap) {
@@ -264,25 +264,22 @@ public final class SpaceChunkLoading {
         return shifts;
     }
 
-    private static double shipSpeedAround(SubLevelContainer container, ServerPlayer player) {
-        if (container == null) return 0.0;
+    private static void addProjectionArea(double centerX, double centerZ, LongOpenHashSet wanted) {
+        int radiusChunks = Mth.ceil(SpaceConstants.SHIP_GRID_ATTACH_RANGE / 16.0);
+        int centerChunkX = Mth.floor(centerX) >> 4;
+        int centerChunkZ = Mth.floor(centerZ) >> 4;
+        double radiusSqr = SpaceConstants.SHIP_GRID_ATTACH_RANGE * SpaceConstants.SHIP_GRID_ATTACH_RANGE;
 
-        double speed = 0.0;
-        for (SubLevel subLevel : container.getAllSubLevels()) {
-            if (subLevel.isRemoved() || !(subLevel instanceof ServerSubLevel serverSubLevel)) continue;
-
-            BoundingBox3dc bounds = subLevel.boundingBox();
-            if (player.getX() < bounds.minX() - ABOARD_MARGIN || player.getX() > bounds.maxX() + ABOARD_MARGIN
-                    || player.getY() < bounds.minY() - ABOARD_MARGIN || player.getY() > bounds.maxY() + ABOARD_MARGIN
-                    || player.getZ() < bounds.minZ() - ABOARD_MARGIN || player.getZ() > bounds.maxZ() + ABOARD_MARGIN) {
-                continue;
+        for (int z = centerChunkZ - radiusChunks; z <= centerChunkZ + radiusChunks; z++) {
+            double nearestZ = Math.max(Math.max(z * 16.0 - centerZ, 0.0), centerZ - (z + 1) * 16.0);
+            for (int x = centerChunkX - radiusChunks; x <= centerChunkX + radiusChunks; x++) {
+                if (wanted.size() >= MAX_PROJECTION_COLUMNS) return;
+                double nearestX = Math.max(Math.max(x * 16.0 - centerX, 0.0), centerX - (x + 1) * 16.0);
+                if (nearestX * nearestX + nearestZ * nearestZ <= radiusSqr) {
+                    wanted.add(ChunkPos.asLong(x, z));
+                }
             }
-
-            Vector3dc velocity = serverSubLevel.latestLinearVelocity;
-            double shipSpeed = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
-            if (Double.isFinite(shipSpeed)) speed = Math.max(speed, shipSpeed);
         }
-        return speed;
     }
 
     private static boolean carriesEntities(ServerLevel level, BoundingBox3dc bounds, double vx, double vz,
@@ -334,6 +331,25 @@ public final class SpaceChunkLoading {
         DistanceManager distanceManager = level.getChunkSource().chunkMap.getDistanceManager();
         long now = level.getGameTime();
 
+        var projection = state.wantedProjection.iterator();
+        while (projection.hasNext()) {
+            long pos = projection.nextLong();
+            if (state.projectionHeld.put(pos, now) == MISSING) {
+                ChunkPos chunk = new ChunkPos(pos);
+                distanceManager.addRegionTicket(PROJECTION_AREA, chunk, PROJECTION_TICKET_DISTANCE, chunk);
+            }
+        }
+
+        ObjectIterator<Long2LongMap.Entry> heldProjection = state.projectionHeld.long2LongEntrySet().fastIterator();
+        while (heldProjection.hasNext()) {
+            Long2LongMap.Entry entry = heldProjection.next();
+            if (entry.getLongValue() < now - RELEASE_DELAY_TICKS) {
+                ChunkPos chunk = new ChunkPos(entry.getLongKey());
+                distanceManager.removeRegionTicket(PROJECTION_AREA, chunk, PROJECTION_TICKET_DISTANCE, chunk);
+                heldProjection.remove();
+            }
+        }
+
         var wanted = state.wanted.iterator();
         while (wanted.hasNext()) {
             long pos = wanted.nextLong();
@@ -354,6 +370,7 @@ public final class SpaceChunkLoading {
         }
 
         state.wanted.clear();
+        state.wantedProjection.clear();
     }
 
     public interface SpaceTickets {
@@ -365,8 +382,9 @@ public final class SpaceChunkLoading {
     private static final class State {
         final ServerLevel level;
         final Long2LongOpenHashMap held = new Long2LongOpenHashMap();
+        final Long2LongOpenHashMap projectionHeld = new Long2LongOpenHashMap();
         final LongOpenHashSet wanted = new LongOpenHashSet();
-        final Object2LongOpenHashMap<UUID> fastUntil = new Object2LongOpenHashMap<>();
+        final LongOpenHashSet wantedProjection = new LongOpenHashSet();
         final Map<UUID, Motion> motions = new HashMap<>();
         boolean warnedCap;
 
