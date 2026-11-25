@@ -87,6 +87,17 @@ public final class SpaceFlightPhysics {
         return Math.max(0.0, entity.getY());
     }
 
+    public static float fallDamageDistance(LivingEntity entity, float distance) {
+        if (!SpaceCatalog.isPlanetDimension(entity.level().dimension())
+                || SpaceShipIntegration.containing(entity) != null) {
+            return distance;
+        }
+
+        double gravity = 1.0 + (gravityMultiplier(entity.level()) - 1.0)
+                * (1.0 - gravityFade(logicalAltitude(entity)));
+        return (float) (distance * gravity);
+    }
+
     private static double gravityMultiplier(Level level) {
         PlanetEnvironmentData environment = SpaceCatalog.environmentForDimension(level.dimension());
         return environment.gravity() / PlanetEnvironmentData.EARTH_GRAVITY;
