@@ -66,18 +66,7 @@ public final class SpaceGridPhysicsPipelineProvider implements PhysicsPipelinePr
 
     @Override
     public PhysicsPipeline createPipeline(ServerLevel level) {
-        ServerLevel pipelineLevel = level;
-        if (SpaceConstants.isGridLevel(level.dimension())) {
-            pipelineLevel = SpaceGridLevelFactory.currentPlotLevel();
-            if (pipelineLevel == null && level.getServer() != null) {
-                pipelineLevel = SpaceGridLevelFactory.spaceLevel(level.getServer());
-            }
-            if (pipelineLevel == null) {
-                throw new IllegalStateException("space level is unavailable while creating a grid physics pipeline");
-            }
-        }
-
-        PhysicsPipeline pipeline = findDelegate().createPipeline(pipelineLevel);
+        PhysicsPipeline pipeline = findDelegate().createPipeline(level);
         if (SpaceConstants.SPACE_LEVEL.equals(level.dimension())) {
             SpaceGridLevelFactory.spaceLevelStarting(level);
             return (PhysicsPipeline) Proxy.newProxyInstance(
